@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import PointerGlow from "./PointerGlow";
 
 function Badge({ children }: { children: React.ReactNode }) {
   return (
@@ -33,14 +32,14 @@ export default function TopBar() {
         </Link>
 
         {/* Desktop nav */}
-        <PointerGlow className="hidden items-center gap-7 text-sm text-[var(--color-ink-soft)] lg:flex">
+        <nav className="hidden items-center gap-7 text-sm text-[var(--color-ink-soft)] lg:flex">
           {NAV.map((l) => (
             <Link key={l.href} href={l.href} className="glow-link flex items-center gap-1.5">
               {l.label}
               {l.badge && <Badge>{l.badge}</Badge>}
             </Link>
           ))}
-        </PointerGlow>
+        </nav>
 
         <div className="flex shrink-0 items-center gap-2">
           <a

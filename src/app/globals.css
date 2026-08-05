@@ -151,43 +151,98 @@ h3,
   font-family: var(--font-mono), monospace;
 }
 
-/* Green glow on hover for menu links */
+/* Per-item green glow that sweeps left → right across the hovered link only */
 .glow-link {
+  position: relative;
+  cursor: pointer;
+  isolation: isolate;
+  transition: color 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* soft glow wash behind the text, wipes in from the left */
+.glow-link::before {
+  content: "";
+  position: absolute;
+  inset: -6px -12px;
+  z-index: -1;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-moss) 20%, transparent),
+    color-mix(in srgb, var(--color-moss) 9%, transparent) 55%,
+    transparent
+  );
+  transform: scaleX(0);
+  transform-origin: left center;
+  opacity: 0;
   transition:
-    color 0.2s ease,
-    text-shadow 0.25s ease,
-    transform 0.2s ease;
+    transform 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.35s ease;
+  pointer-events: none;
+}
+/* thin underline that draws left → right */
+.glow-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -4px;
+  height: 1.5px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--color-moss),
+    color-mix(in srgb, var(--color-moss) 35%, transparent)
+  );
+  box-shadow: 0 0 10px color-mix(in srgb, var(--color-moss) 60%, transparent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
 }
 .glow-link:hover {
   color: var(--color-moss);
-  text-shadow: 0 0 16px color-mix(in srgb, var(--color-moss) 55%, transparent);
 }
-
-/* Radial green glow that follows the cursor across a menu */
-.pointer-glow {
-  position: relative;
-}
-.pointer-glow::before {
-  content: "";
-  position: absolute;
-  inset: -10px -14px;
-  border-radius: 18px;
-  background: radial-gradient(
-    160px circle at var(--mx, -200px) var(--my, -200px),
-    color-mix(in srgb, var(--color-moss) 22%, transparent),
-    transparent 68%
-  );
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  pointer-events: none;
-  z-index: 0;
-}
-.pointer-glow:hover::before {
+.glow-link:hover::before,
+.glow-link:hover::after {
+  transform: scaleX(1);
   opacity: 1;
 }
-.pointer-glow > * {
-  position: relative;
-  z-index: 1;
+
+/* Cursor companion — a soft green dot trailing the pointer (desktop only) */
+.cursor-dot {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--color-moss) 42%, transparent),
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0;
+  transition:
+    opacity 0.3s ease,
+    width 0.25s ease,
+    height 0.25s ease;
+  will-change: transform;
+}
+.cursor-dot.is-visible {
+  opacity: 1;
+}
+.cursor-dot.is-active {
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+}
+@media (hover: none), (prefers-reduced-motion: reduce) {
+  .cursor-dot {
+    display: none;
+  }
 }
 
 /* Focus visibility floor */

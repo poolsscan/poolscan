@@ -5,6 +5,7 @@ import OrganicBg from "@/components/OrganicBg";
 import AnnouncementBar from "@/components/AnnouncementBar";
 import TopBar from "@/components/TopBar";
 import SiteFooter from "@/components/SiteFooter";
+import CursorGlow from "@/components/CursorGlow";
 
 const fraunces = Fraunces({
   variable: "--font-fraunces",
@@ -66,6 +67,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <OrganicBg />
+        <CursorGlow />
         <AnnouncementBar />
         <TopBar />
         {children}
