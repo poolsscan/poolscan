@@ -143,6 +143,41 @@ async function holderDist(
   }
 }
 
+interface Dex {
+  price: number;
+  change: number;
+  volume: number;
+  liquidity: number;
+  mcap: number;
+}
+
+/** Live market data (price/vol/liquidity/mcap/change) from Dexscreener. */
+async function dexData(addr: string): Promise<Dex | null> {
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addr}`, {
+      headers: { "User-Agent": UA },
+      next: { revalidate: 30 },
+    });
+    if (!res.ok) return null;
+    const d = await res.json();
+    const all: any[] = d.pairs || [];
+    const mine = all.filter((p) => (p.baseToken?.address || "").toLowerCase() === addr.toLowerCase());
+    const pick = (mine.length ? mine : all).sort(
+      (a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0),
+    )[0];
+    if (!pick) return null;
+    return {
+      price: Number(pick.priceUsd) || 0,
+      change: Number(pick.priceChange?.h24) || 0,
+      volume: Number(pick.volume?.h24) || 0,
+      liquidity: Number(pick.liquidity?.usd) || 0,
+      mcap: Number(pick.marketCap || pick.fdv) || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function hueFrom(addr: string): number {
   return parseInt(addr.slice(2, 8), 16) % 360;
 }
@@ -152,10 +187,12 @@ function assemble(
   meta: Meta,
   ageSeconds: number,
   dist: { top10Pct: number; devHoldingPct: number },
+  dex: Dex | null,
 ): Token {
   const supplyNum = Number(meta.totalSupply) / 10 ** meta.decimals;
-  const priceUsd = meta.priceUsd;
-  const marketCapUsd = priceUsd > 0 ? priceUsd * supplyNum : 0;
+  const priceUsd = dex?.price ?? 0;
+  const liquidityUsd = dex?.liquidity ?? 0;
+  const marketCapUsd = dex?.mcap || (priceUsd > 0 ? priceUsd * supplyNum : 0);
 
   // pools.trade model: liquidity lives in the protocol curve/pool (not dev-pullable
   // pre-graduation), supply is fixed, and the token is ownerless. Distribution is
@@ -170,7 +207,7 @@ function assemble(
     contractRenounced: true,
     mintable: false,
   };
-  const safety = computeSafety(metrics, 25_000);
+  const safety = computeSafety(metrics, liquidityUsd > 0 ? liquidityUsd : 25_000);
 
   return {
     id: addr,
@@ -179,9 +216,9 @@ function assemble(
     hue: hueFrom(addr),
     ageSeconds,
     priceUsd,
-    changePct: 0,
-    volumeUsd: 0,
-    liquidityUsd: 0,
+    changePct: dex?.change ?? 0,
+    volumeUsd: dex?.volume ?? 0,
+    liquidityUsd,
     marketCapUsd,
     holders: meta.holders,
     graduationPct: 0,
@@ -200,11 +237,11 @@ export async function getTokensOnchain(): Promise<Token[]> {
   const tokens = await Promise.all(
     list.map(async (l) => {
       try {
-        const meta = await tokenMeta(l.address);
+        const [meta, dex] = await Promise.all([tokenMeta(l.address), dexData(l.address)]);
         const dist = await holderDist(l.address, meta.totalSupply, creators[l.address]);
         const ageSeconds =
           clock.latest && l.block ? Math.max(1, Math.round((clock.latest - l.block) * clock.blockTime)) : 0;
-        return assemble(l.address, meta, ageSeconds, dist);
+        return assemble(l.address, meta, ageSeconds, dist, dex);
       } catch {
         return null;
       }
@@ -217,10 +254,11 @@ export async function getTokenOnchain(id: string): Promise<Token | null> {
   const addr = id.toLowerCase();
   if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) return null;
   try {
-    const [meta, clock, creators] = await Promise.all([
+    const [meta, clock, creators, dex] = await Promise.all([
       tokenMeta(addr),
       chainClock(),
       creatorsOf([addr]),
+      dexData(addr),
     ]);
     const dist = await holderDist(addr, meta.totalSupply, creators[addr]);
     // best-effort age from the token's creation block
@@ -232,7 +270,7 @@ export async function getTokenOnchain(id: string): Promise<Token | null> {
     } catch {
       /* ignore */
     }
-    return assemble(addr, meta, ageSeconds, dist);
+    return assemble(addr, meta, ageSeconds, dist, dex);
   } catch {
     return null;
   }
@@ -253,7 +291,7 @@ export async function getStatsOnchain(): Promise<MarketStats> {
   const rugged = tokens.filter((t) => t.safety.tier === "puddle").length;
   return {
     launchedToday: launched || tokens.length,
-    totalVolumeUsd: 0,
+    totalVolumeUsd: tokens.reduce((s, t) => s + t.volumeUsd, 0),
     graduated: 0,
     ruggedToday: rugged,
     avgSafety,

@@ -5,7 +5,7 @@ import DepthBadge from "@/components/DepthBadge";
 import Countdown from "@/components/Countdown";
 import { EARLY_ACCESS_DEADLINE_ISO } from "@/lib/config";
 import { getStats, getTokens } from "@/lib/data";
-import { compact } from "@/lib/format";
+import { compact, usd } from "@/lib/format";
 import { TIER_UI } from "@/lib/ui";
 import type { SafetyTier } from "@/lib/types";
 
@@ -33,7 +33,7 @@ export default async function Home() {
 
   const statTiles = [
     { label: "Tokens launched", value: compact(stats.launchedToday) },
-    { label: "On the board", value: compact(tokens.length) },
+    { label: "Volume 24h", value: usd(stats.totalVolumeUsd) },
     { label: "Avg depth", value: `${stats.avgSafety}/100` },
     { label: "Puddles flagged", value: compact(stats.ruggedToday), danger: true },
   ];

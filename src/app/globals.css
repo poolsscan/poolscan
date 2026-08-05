@@ -151,6 +151,45 @@ h3,
   font-family: var(--font-mono), monospace;
 }
 
+/* Green glow on hover for menu links */
+.glow-link {
+  transition:
+    color 0.2s ease,
+    text-shadow 0.25s ease,
+    transform 0.2s ease;
+}
+.glow-link:hover {
+  color: var(--color-moss);
+  text-shadow: 0 0 16px color-mix(in srgb, var(--color-moss) 55%, transparent);
+}
+
+/* Radial green glow that follows the cursor across a menu */
+.pointer-glow {
+  position: relative;
+}
+.pointer-glow::before {
+  content: "";
+  position: absolute;
+  inset: -10px -14px;
+  border-radius: 18px;
+  background: radial-gradient(
+    160px circle at var(--mx, -200px) var(--my, -200px),
+    color-mix(in srgb, var(--color-moss) 22%, transparent),
+    transparent 68%
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+.pointer-glow:hover::before {
+  opacity: 1;
+}
+.pointer-glow > * {
+  position: relative;
+  z-index: 1;
+}
+
 /* Focus visibility floor */
 :focus-visible {
   outline: 2px solid var(--color-moss);

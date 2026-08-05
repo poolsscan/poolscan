@@ -28,7 +28,7 @@ const fragmentMono = Fragment_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL("https://poolscan.app"),
   title: {
-    default: "PoolScan — Rug radar & live scanner for pools.trade",
+    default: "PoolScan",
     template: "%s · PoolScan",
   },
   description:

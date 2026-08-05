@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import PointerGlow from "@/components/PointerGlow";
 import { TIER_UI } from "@/lib/ui";
 import type { SafetyTier } from "@/lib/types";
 
@@ -68,18 +69,16 @@ export default function DocsPage() {
       <div className="mt-12 grid gap-12 lg:grid-cols-[200px_1fr]">
         {/* TOC */}
         <aside className="hidden lg:block">
-          <nav className="sticky top-28 space-y-2 text-sm">
+          <div className="sticky top-28 text-sm">
             <p className="eyebrow mb-3">On this page</p>
-            {TOC.map(([id, label]) => (
-              <a
-                key={id}
-                href={`#${id}`}
-                className="block text-[var(--color-ink-soft)] transition-colors hover:text-[var(--color-ink)]"
-              >
-                {label}
-              </a>
-            ))}
-          </nav>
+            <PointerGlow className="flex flex-col gap-2">
+              {TOC.map(([id, label]) => (
+                <a key={id} href={`#${id}`} className="glow-link block text-[var(--color-ink-soft)]">
+                  {label}
+                </a>
+              ))}
+            </PointerGlow>
+          </div>
         </aside>
 
         <div className="max-w-2xl space-y-14">
