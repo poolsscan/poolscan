@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import TopBar from "@/components/TopBar";
 import DepthBadge from "@/components/DepthBadge";
 import TokenAvatar from "@/components/TokenAvatar";
 import SafetyBreakdown from "@/components/SafetyBreakdown";
@@ -42,9 +41,7 @@ export default async function TokenPage({ params }: Params) {
   ];
 
   return (
-    <>
-      <TopBar />
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-10 sm:px-6">
+    <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-10 sm:px-6">
         <Link href="/#feed" className="text-sm text-[var(--color-ink-soft)] transition-colors hover:text-[var(--color-ink)]">
           ← Live feed
         </Link>
@@ -159,6 +156,5 @@ export default async function TokenPage({ params }: Params) {
           here is financial advice — always do your own research.
         </p>
       </main>
-    </>
   );
 }

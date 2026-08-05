@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { Fraunces, Plus_Jakarta_Sans, Fragment_Mono } from "next/font/google";
 import "./globals.css";
 import OrganicBg from "@/components/OrganicBg";
+import AnnouncementBar from "@/components/AnnouncementBar";
+import TopBar from "@/components/TopBar";
+import SiteFooter from "@/components/SiteFooter";
 
 const fraunces = Fraunces({
   variable: "--font-fraunces",
@@ -63,7 +66,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <OrganicBg />
+        <AnnouncementBar />
+        <TopBar />
         {children}
+        <SiteFooter />
       </body>
     </html>
   );
