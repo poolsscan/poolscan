@@ -7,6 +7,13 @@ type Preset = { name: string; tag: string; headline: string; subtext: string };
 
 const PRESETS: Preset[] = [
   {
+    name: "No guessing",
+    tag: "How it works",
+    headline: "We show our work",
+    subtext:
+      "Every depth score breaks into seven on-chain signals. If we can't read one yet, we mark it not scored and leave it out — no filler, no guessing.",
+  },
+  {
     name: "Introducing",
     tag: "Introducing",
     headline: "Meet PoolScan",
@@ -14,18 +21,18 @@ const PRESETS: Preset[] = [
       "The rug radar for pools.trade. Sound the depth of every new token on Robinhood Chain — before you dive in.",
   },
   {
-    name: "New feature",
+    name: "Snipers",
     tag: "What's new",
-    headline: "Live depth scoring",
+    headline: "Sniper detection is live",
     subtext:
-      "Every token now gets a 0–100 depth score from real on-chain ownership, supply and holder distribution.",
+      "At launch the whole supply sits in the pool, so every early buy is on-chain. We sum them and show the share taken before you could blink.",
   },
   {
     name: "Token alert",
-    tag: "Deep water · 92",
-    headline: "$FRONG looks solid",
+    tag: "Deep water · 100",
+    headline: "$FRONG reads clean",
     subtext:
-      "Ownership renounced, supply fixed, top-10 holders under 20%. Sounded live from the pools.trade factory.",
+      "Ownerless contract, fixed supply, top 10 hold 12%, 9.5K holders. Sounded live from the pools.trade factory.",
   },
 ];
 
