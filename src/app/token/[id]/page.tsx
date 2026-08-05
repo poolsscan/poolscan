@@ -53,7 +53,7 @@ export default async function TokenPage({ params }: Params) {
 
         {/* Header */}
         <div className="mt-6 flex flex-wrap items-center gap-4">
-          <TokenAvatar symbol={token.symbol} hue={token.hue} size={56} />
+          <TokenAvatar symbol={token.symbol} hue={token.hue} size={56} logoUrl={token.logoUrl} />
           <div className="min-w-0">
             <h1 className="serif text-3xl text-[var(--color-ink)] sm:text-4xl">
               {token.symbol}

@@ -20,7 +20,12 @@ const FACTORY = (
 
 // Both endpoints reject the default fetch/urllib UA — a browser UA is required.
 const UA = "Mozilla/5.0 (compatible; PoolScan/1.0)";
-const FEED_LIMIT = 16;
+/** How many factory log pages to crawl (50 launches per page). */
+const LOG_PAGES = 8;
+/** How many tokens end up on the board after ranking. */
+const FEED_LIMIT = 30;
+/** Of those, how many slots go to the freshest launches (rest go to top traded). */
+const FRESH_SLOTS = 12;
 
 async function bs(path: string, revalidate = 30): Promise<any> {
   const res = await fetch(`${BS}${path}`, {
@@ -42,10 +47,19 @@ async function rpc(method: string, params: unknown[], revalidate = 15): Promise<
   return j.result;
 }
 
-/** Newest pools.trade tokens, read from the factory's TokenCreated logs. */
+/** Every pools.trade token, read from the factory's TokenCreated logs (newest first). */
 async function listTokens(limit: number): Promise<{ address: string; block: number }[]> {
-  const data = await bs(`/api/v2/addresses/${FACTORY}/logs`);
-  const items: any[] = data.items || [];
+  const items: any[] = [];
+  let next: Record<string, any> | null = null;
+  for (let page = 0; page < LOG_PAGES; page++) {
+    const qs = next
+      ? "?" + new URLSearchParams(Object.entries(next).map(([k, v]) => [k, String(v)])).toString()
+      : "";
+    const data: any = await bs(`/api/v2/addresses/${FACTORY}/logs${qs}`);
+    items.push(...(data.items || []));
+    next = data.next_page_params || null;
+    if (!next) break;
+  }
   const out: { address: string; block: number }[] = [];
   for (const it of items) {
     let addr: string | undefined;
@@ -83,18 +97,31 @@ async function chainClock(): Promise<{ latest: number; blockTime: number }> {
   }
 }
 
-async function creatorsOf(addrs: string[]): Promise<Record<string, string>> {
-  const map: Record<string, string> = {};
-  try {
-    const d = await bs(
-      `/api?module=contract&action=getcontractcreation&contractaddresses=${addrs.join(",")}`,
-    );
-    for (const e of d.result || []) {
-      map[(e.contractAddress || "").toLowerCase()] = (e.contractCreator || "").toLowerCase();
-    }
-  } catch {
-    /* best effort */
-  }
+async function creatorsOf(
+  addrs: string[],
+): Promise<Record<string, { creator: string; block: number }>> {
+  const map: Record<string, { creator: string; block: number }> = {};
+  // Blockscout caps how many addresses one call accepts — request in chunks.
+  const CHUNK = 10;
+  const chunks: string[][] = [];
+  for (let i = 0; i < addrs.length; i += CHUNK) chunks.push(addrs.slice(i, i + CHUNK));
+  await Promise.all(
+    chunks.map(async (group) => {
+      try {
+        const d = await bs(
+          `/api?module=contract&action=getcontractcreation&contractaddresses=${group.join(",")}`,
+        );
+        for (const e of d.result || []) {
+          map[(e.contractAddress || "").toLowerCase()] = {
+            creator: (e.contractCreator || "").toLowerCase(),
+            block: Number(e.blockNumber) || 0,
+          };
+        }
+      } catch {
+        /* best effort */
+      }
+    }),
+  );
   return map;
 }
 
@@ -149,33 +176,56 @@ interface Dex {
   volume: number;
   liquidity: number;
   mcap: number;
+  logoUrl?: string;
 }
 
-/** Live market data (price/vol/liquidity/mcap/change) from Dexscreener. */
+function toDex(pair: any): Dex {
+  return {
+    price: Number(pair.priceUsd) || 0,
+    change: Number(pair.priceChange?.h24) || 0,
+    volume: Number(pair.volume?.h24) || 0,
+    liquidity: Number(pair.liquidity?.usd) || 0,
+    mcap: Number(pair.marketCap || pair.fdv) || 0,
+    logoUrl: pair.info?.imageUrl || undefined,
+  };
+}
+
+/**
+ * Live market data from Dexscreener for many tokens at once (30 per request).
+ * Keeps, per token, the pair with the deepest liquidity.
+ */
+async function dexBatch(addrs: string[]): Promise<Record<string, Dex>> {
+  const out: Record<string, Dex> = {};
+  const CHUNK = 30;
+  const groups: string[][] = [];
+  for (let i = 0; i < addrs.length; i += CHUNK) groups.push(addrs.slice(i, i + CHUNK));
+  await Promise.all(
+    groups.map(async (group) => {
+      try {
+        const res = await fetch(
+          `https://api.dexscreener.com/latest/dex/tokens/${group.join(",")}`,
+          { headers: { "User-Agent": UA }, next: { revalidate: 30 } },
+        );
+        if (!res.ok) return;
+        const d = await res.json();
+        for (const p of d.pairs || []) {
+          const base = (p.baseToken?.address || "").toLowerCase();
+          if (!group.includes(base)) continue;
+          const prev = out[base];
+          const liq = Number(p.liquidity?.usd) || 0;
+          if (!prev || liq > prev.liquidity) out[base] = toDex(p);
+        }
+      } catch {
+        /* best effort */
+      }
+    }),
+  );
+  return out;
+}
+
 async function dexData(addr: string): Promise<Dex | null> {
-  try {
-    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addr}`, {
-      headers: { "User-Agent": UA },
-      next: { revalidate: 30 },
-    });
-    if (!res.ok) return null;
-    const d = await res.json();
-    const all: any[] = d.pairs || [];
-    const mine = all.filter((p) => (p.baseToken?.address || "").toLowerCase() === addr.toLowerCase());
-    const pick = (mine.length ? mine : all).sort(
-      (a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0),
-    )[0];
-    if (!pick) return null;
-    return {
-      price: Number(pick.priceUsd) || 0,
-      change: Number(pick.priceChange?.h24) || 0,
-      volume: Number(pick.volume?.h24) || 0,
-      liquidity: Number(pick.liquidity?.usd) || 0,
-      mcap: Number(pick.marketCap || pick.fdv) || 0,
-    };
-  } catch {
-    return null;
-  }
+  const m = await dexBatch([addr.toLowerCase()]);
+  return m[addr.toLowerCase()] ?? null;
 }
 
 function hueFrom(addr: string): number {
@@ -214,6 +264,7 @@ function assemble(
     name: meta.name,
     symbol: meta.symbol,
     hue: hueFrom(addr),
+    logoUrl: dex?.logoUrl,
     ageSeconds,
     priceUsd,
     changePct: dex?.change ?? 0,
@@ -228,8 +279,29 @@ function assemble(
 }
 
 export async function getTokensOnchain(): Promise<Token[]> {
-  const list = await listTokens(FEED_LIMIT);
-  if (!list.length) return [];
+  // 1. Every launch the pools.trade factory has ever minted, newest first.
+  const all = await listTokens(LOG_PAGES * 50);
+  if (!all.length) return [];
+
+  // 2. Cheap batch pass for market data across the whole history.
+  const market = await dexBatch(all.map((l) => l.address));
+
+  // 3. Rank: keep the freshest launches, then fill with the most-traded. This is
+  //    pure on-chain discovery — established tokens earn their slot by volume,
+  //    nothing is hardcoded.
+  const fresh = all.slice(0, FRESH_SLOTS);
+  const chosen = new Map(fresh.map((l) => [l.address, l]));
+  const rest = all
+    .filter((l) => !chosen.has(l.address))
+    .sort((a, b) => (market[b.address]?.volume ?? 0) - (market[a.address]?.volume ?? 0));
+  for (const l of rest) {
+    if (chosen.size >= FEED_LIMIT) break;
+    if ((market[l.address]?.volume ?? 0) <= 0) continue;
+    chosen.set(l.address, l);
+  }
+  const list = [...chosen.values()];
+
+  // 4. Enrich the shortlist with identity + holder distribution.
   const [clock, creators] = await Promise.all([
     chainClock(),
     creatorsOf(list.map((l) => l.address)),
@@ -237,11 +309,13 @@ export async function getTokensOnchain(): Promise<Token[]> {
   const tokens = await Promise.all(
     list.map(async (l) => {
       try {
-        const [meta, dex] = await Promise.all([tokenMeta(l.address), dexData(l.address)]);
-        const dist = await holderDist(l.address, meta.totalSupply, creators[l.address]);
+        const meta = await tokenMeta(l.address);
+        const info = creators[l.address];
+        const dist = await holderDist(l.address, meta.totalSupply, info?.creator);
+        const block = l.block || info?.block || 0;
         const ageSeconds =
-          clock.latest && l.block ? Math.max(1, Math.round((clock.latest - l.block) * clock.blockTime)) : 0;
-        return assemble(l.address, meta, ageSeconds, dist, dex);
+          clock.latest && block ? Math.max(1, Math.round((clock.latest - block) * clock.blockTime)) : 0;
+        return assemble(l.address, meta, ageSeconds, dist, market[l.address] ?? null);
       } catch {
         return null;
       }
@@ -260,16 +334,11 @@ export async function getTokenOnchain(id: string): Promise<Token | null> {
       creatorsOf([addr]),
       dexData(addr),
     ]);
-    const dist = await holderDist(addr, meta.totalSupply, creators[addr]);
-    // best-effort age from the token's creation block
-    let ageSeconds = 0;
-    try {
-      const c = await bs(`/api?module=contract&action=getcontractcreation&contractaddresses=${addr}`);
-      const block = Number(c.result?.[0]?.blockNumber) || 0;
-      if (clock.latest && block) ageSeconds = Math.max(1, Math.round((clock.latest - block) * clock.blockTime));
-    } catch {
-      /* ignore */
-    }
+    const info = creators[addr];
+    const dist = await holderDist(addr, meta.totalSupply, info?.creator);
+    const block = info?.block || 0;
+    const ageSeconds =
+      clock.latest && block ? Math.max(1, Math.round((clock.latest - block) * clock.blockTime)) : 0;
     return assemble(addr, meta, ageSeconds, dist, dex);
   } catch {
     return null;

@@ -44,8 +44,10 @@ export interface Token {
   id: string;
   name: string;
   symbol: string;
-  /** 0..360 hue used for the avatar gradient. */
+  /** 0..360 hue used for the avatar gradient (fallback when there's no logo). */
   hue: number;
+  /** Token logo, when the indexer has one. */
+  logoUrl?: string;
   /** Seconds since launch. */
   ageSeconds: number;
   priceUsd: number;

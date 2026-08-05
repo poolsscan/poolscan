@@ -167,7 +167,7 @@ export default function TokenBoard({ initial, simulate = false }: { initial: Tok
                   </td>
                   <td className="px-3 py-3.5 align-middle">
                     <div className="flex items-center gap-3">
-                      <TokenAvatar symbol={t.symbol} hue={t.hue} />
+                      <TokenAvatar symbol={t.symbol} hue={t.hue} logoUrl={t.logoUrl} />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <Link

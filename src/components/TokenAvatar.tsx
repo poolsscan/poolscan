@@ -1,10 +1,29 @@
+/* eslint-disable @next/next/no-img-element */
 interface Props {
   symbol: string;
   hue: number;
   size?: number;
+  logoUrl?: string;
 }
 
-export default function TokenAvatar({ symbol, hue, size = 34 }: Props) {
+export default function TokenAvatar({ symbol, hue, size = 34, logoUrl }: Props) {
+  if (logoUrl) {
+    return (
+      <img
+        src={logoUrl}
+        alt=""
+        width={size}
+        height={size}
+        loading="lazy"
+        className="shrink-0 rounded-full object-cover"
+        style={{
+          width: size,
+          height: size,
+          boxShadow: "inset 0 0 0 1px rgba(18,33,29,0.08), 0 1px 2px rgba(18,33,29,0.10)",
+        }}
+      />
+    );
+  }
   return (
     <span
       className="grid shrink-0 place-items-center rounded-full font-semibold text-white"
