@@ -7,4 +7,4 @@
  *
  * To make it exactly 24h from your launch moment, just edit this one line.
  */
-export const EARLY_ACCESS_DEADLINE_ISO = "2026-08-06T11:00:00.000Z";
+export const EARLY_ACCESS_DEADLINE_ISO = "2026-08-05T16:00:00.000Z";

@@ -2,16 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-
-function Mark() {
-  return (
-    <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden>
-      <circle cx="16" cy="16" r="14" fill="none" stroke="var(--color-pine)" strokeWidth="1.75" />
-      <path d="M16 2 a14 14 0 0 1 0 28 a9 9 0 0 0 0 -18 a5 5 0 0 1 0 -10 z" fill="var(--color-pine)" />
-      <circle cx="16" cy="21" r="3.4" fill="var(--color-moss)" />
-    </svg>
-  );
-}
+import Image from "next/image";
 
 function Badge({ children }: { children: React.ReactNode }) {
   return (
@@ -36,7 +27,7 @@ export default function TopBar() {
     <header className="sticky top-0 z-40 border-b border-[var(--color-line)] bg-[color-mix(in_srgb,var(--color-paper)_85%,transparent)] backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
         <Link href="/" onClick={close} className="flex shrink-0 items-center gap-2.5">
-          <Mark />
+          <Image src="/logo.png" alt="PoolScan" width={30} height={30} priority className="h-[30px] w-[30px]" />
           <span className="serif text-2xl text-[var(--color-ink)]">poolscan</span>
         </Link>
 
