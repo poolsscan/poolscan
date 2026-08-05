@@ -48,6 +48,7 @@ export default function TokenBoard({ initial, simulate = false }: { initial: Tok
   const [filter, setFilter] = useState<Filter>("all");
   const [flashId, setFlashId] = useState<string | null>(null);
   const [live, setLive] = useState(true);
+  const [query, setQuery] = useState("");
   const reserveRef = useRef(0);
 
   // Live simulation — client only, so no hydration drift.
@@ -78,14 +79,25 @@ export default function TokenBoard({ initial, simulate = false }: { initial: Tok
     };
   }, [live, simulate]);
 
+  const q = query.trim().toLowerCase();
+  const isAddress = /^0x[0-9a-f]{40}$/.test(q);
+
   const rows = useMemo(() => {
-    const filtered = tokens.filter((t) =>
-      filter === "all" ? true : filter === "deep" ? t.safety.tier === "deep" : t.safety.tier !== "puddle",
-    );
+    const filtered = tokens.filter((t) => {
+      const tierOk =
+        filter === "all" ? true : filter === "deep" ? t.safety.tier === "deep" : t.safety.tier !== "puddle";
+      if (!tierOk) return false;
+      if (!q) return true;
+      return (
+        t.symbol.toLowerCase().includes(q) ||
+        t.name.toLowerCase().includes(q) ||
+        t.id.toLowerCase().includes(q)
+      );
+    });
     const acc = ACCESS[sortKey];
     const dir = sortDir === "asc" ? 1 : -1;
     return [...filtered].sort((a, b) => (acc(a) - acc(b)) * dir);
-  }, [tokens, sortKey, sortDir, filter]);
+  }, [tokens, sortKey, sortDir, filter, q]);
 
   function onSort(key: SortKey) {
     if (key === sortKey) {
@@ -113,6 +125,20 @@ export default function TokenBoard({ initial, simulate = false }: { initial: Tok
           >
             {live ? "Live · sounding" : "Paused"}
           </button>
+        </div>
+
+        <div className="order-3 w-full sm:order-none sm:w-auto sm:flex-1 sm:max-w-xs">
+          <label htmlFor="token-search" className="sr-only">
+            Search by name, ticker or contract address
+          </label>
+          <input
+            id="token-search"
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name, ticker or address…"
+            className="w-full rounded-full border border-[var(--color-line-strong)] bg-[var(--color-paper)] px-4 py-1.5 text-sm text-[var(--color-ink)] placeholder:text-[var(--color-ink-faint)] focus:border-[var(--color-moss)] focus:outline-none"
+          />
         </div>
 
         <div className="flex items-center gap-1 rounded-full bg-[var(--color-cream)] p-1">
@@ -232,6 +258,27 @@ export default function TokenBoard({ initial, simulate = false }: { initial: Tok
           </tbody>
         </table>
       </div>
+
+      {rows.length === 0 && (
+        <div className="px-6 py-10 text-center">
+          <p className="text-sm text-[var(--color-ink-soft)]">
+            Nothing on the board matches{" "}
+            <span className="mono text-[var(--color-ink)]">{query}</span>.
+          </p>
+          {isAddress ? (
+            <Link
+              href={`/token/${q}`}
+              className="mt-3 inline-block rounded-full bg-[var(--color-pine)] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--color-pine-deep)]"
+            >
+              Sound this address anyway →
+            </Link>
+          ) : (
+            <p className="mt-1 text-xs text-[var(--color-ink-faint)]">
+              Paste a full contract address to sound a token that isn&apos;t on the board.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

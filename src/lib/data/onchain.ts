@@ -33,6 +33,8 @@ const TRANSFER_TOPIC =
  * whale would flag every healthy launch as concentrated.
  */
 const POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951";
+/** Uniswap v4 PositionManager — mints an ERC-721 for each liquidity position. */
+const POSITION_MANAGER = "0x58daec3116aae6d93017baaea7749052e8a04fa7";
 const BURN_ADDRESSES = new Set([
   "0x0000000000000000000000000000000000000000",
   "0x000000000000000000000000000000000000dead",
@@ -309,7 +311,7 @@ async function sniperShare(
           toBlock: "0x" + (creationBlock + SNIPE_WINDOW_BLOCKS).toString(16),
         },
       ],
-      600,
+       86400,
     );
     if (!Array.isArray(logs)) return null;
     let sniped = 0n;
@@ -324,6 +326,45 @@ async function sniperShare(
     return Math.min(100, Number((sniped * 10000n) / supply) / 100);
   } catch {
     return null;
+  }
+}
+
+/**
+ * Who holds the launch liquidity position.
+ *
+ * Liquidity is added through the v4 PositionManager, which mints an ERC-721 to
+ * whoever owns the position. If that owner is a plain wallet, one key can pull
+ * the pool; if it's a contract, no single wallet can. We deliberately stop
+ * there — the holder's terms aren't verifiable on-chain, so we don't claim the
+ * liquidity is "locked", only who is in a position to move it.
+ */
+async function lpCustody(
+  creationBlock: number,
+): Promise<"contract" | "wallet" | "unknown"> {
+  if (!creationBlock) return "unknown";
+  try {
+    const logs = await rpc<Json[]>(
+      "eth_getLogs",
+      [
+        {
+          address: POSITION_MANAGER,
+          topics: [TRANSFER_TOPIC],
+          fromBlock: "0x" + creationBlock.toString(16),
+          toBlock: "0x" + (creationBlock + 2).toString(16),
+        },
+      ],
+       86400,
+    );
+    if (!Array.isArray(logs) || !logs.length) return "unknown";
+    // ERC-721 transfers carry four topics; follow the position to its last owner.
+    const moves = logs.filter((e) => (e.topics?.length ?? 0) >= 4);
+    if (!moves.length) return "unknown";
+    const owner = ("0x" + String(moves[moves.length - 1].topics[2]).slice(26)).toLowerCase();
+    if (BURN_ADDRESSES.has(owner)) return "contract"; // burned — nobody can move it
+    const code = await rpc<string>("eth_getCode", [owner, "latest"], 3600);
+    return code && code.length > 4 ? "contract" : "wallet";
+  } catch {
+    return "unknown";
   }
 }
 
@@ -369,6 +410,7 @@ function assemble(
   dex: Dex | null,
   traits: CodeTraits,
   sniperPct: number | null,
+  lpStatus: TokenMetrics["lpStatus"],
 ): Token {
   const supplyNum = Number(meta.totalSupply) / 10 ** meta.decimals;
   const priceUsd = dex?.price ?? 0;
@@ -379,7 +421,7 @@ function assemble(
   // aren't decoded yet, so they stay null — reported as unknown rather than
   // guessed, and excluded from the score.
   const metrics: TokenMetrics = {
-    lpStatus: "unknown",
+    lpStatus,
     lpUnlockDays: null,
     devHoldingPct: dist.devHoldingPct,
     top10Pct: dist.top10Pct,
@@ -442,13 +484,14 @@ export async function getTokensOnchain(): Promise<Token[]> {
         const [meta, traits] = await Promise.all([tokenMeta(l.address), codeTraits(l.address)]);
         const info = creators[l.address];
         const block = l.block || info?.block || 0;
-        const [dist, snipers] = await Promise.all([
+        const [dist, snipers, lp] = await Promise.all([
           holderDist(l.address, meta.totalSupply, info?.creator),
           sniperShare(l.address, block, meta.totalSupply),
+          lpCustody(block),
         ]);
         const ageSeconds =
           clock.latest && block ? Math.max(1, Math.round((clock.latest - block) * clock.blockTime)) : 0;
-        return assemble(l.address, meta, ageSeconds, dist, market[l.address] ?? null, traits, snipers);
+        return assemble(l.address, meta, ageSeconds, dist, market[l.address] ?? null, traits, snipers, lp);
       } catch {
         return null;
       }
@@ -470,13 +513,14 @@ export async function getTokenOnchain(id: string): Promise<Token | null> {
     ]);
     const info = creators[addr];
     const block = info?.block || 0;
-    const [dist, snipers] = await Promise.all([
+    const [dist, snipers, lp] = await Promise.all([
       holderDist(addr, meta.totalSupply, info?.creator),
       sniperShare(addr, block, meta.totalSupply),
+      lpCustody(block),
     ]);
     const ageSeconds =
       clock.latest && block ? Math.max(1, Math.round((clock.latest - block) * clock.blockTime)) : 0;
-    return assemble(addr, meta, ageSeconds, dist, dex, traits, snipers);
+    return assemble(addr, meta, ageSeconds, dist, dex, traits, snipers, lp);
   } catch {
     return null;
   }

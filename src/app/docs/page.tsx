@@ -20,7 +20,7 @@ const TOC = [
 ];
 
 const SOUNDINGS: [string, string, string][] = [
-  ["Liquidity", "28", "The biggest rug lever. LP burned = it can never be pulled (full marks). LP locked scores by how long it's locked. Unlocked LP scores zero — it can be drained at any moment."],
+  ["Liquidity", "28", "The biggest rug lever. We read who holds the launch liquidity position: a contract means no single wallet can withdraw it; a plain wallet means one key can pull the pool. Burned LP scores full marks. We don't claim liquidity is “locked” unless that's provable on-chain."],
   ["Ownership", "14", "Whether the owner keys are renounced. Renounced = nobody can flip a privileged switch. Keys still active scores zero."],
   ["Dev wallet", "18", "Share of supply held by the deployer. Under ~3% is ideal; 20%+ scores zero."],
   ["Distribution", "14", "Share held by the top 10 wallets. Under ~25% is healthy; 70%+ scores zero."],
@@ -161,10 +161,15 @@ export default function DocsPage() {
             </p>
             <p className="mt-4">
               Today we read: ownership and mint capability (straight from the deployed bytecode),
-              holder distribution and dev-wallet share, pool depth, and live market data. Two
-              signals aren&apos;t decoded yet — <strong className="text-[var(--color-ink)]">LP
-              custody</strong> and <strong className="text-[var(--color-ink)]">launch-block
-              sniping</strong> — so they show as not scored until they are.
+              holder distribution and dev-wallet share, launch-window sniper share, who holds the
+              launch liquidity position, pool depth, and live market data.
+            </p>
+            <p className="mt-4">
+              Two honest limits. We can tell you a launch LP is held by a contract rather than a
+              wallet, but not the terms of that contract — so we credit it without calling the
+              liquidity &ldquo;locked&rdquo;. And bonding-curve{" "}
+              <strong className="text-[var(--color-ink)]">graduation</strong> isn&apos;t decoded
+              yet.
             </p>
             <p className="mt-4">
               Depth scores are <strong className="text-[var(--color-ink)]">heuristics</strong>, not

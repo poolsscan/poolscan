@@ -31,8 +31,12 @@ export interface SafetyReport {
  * of the score rather than silently invented.
  */
 export interface TokenMetrics {
-  /** How the pool's liquidity is secured. */
-  lpStatus: "burned" | "locked" | "unlocked" | "unknown";
+  /**
+   * Who can move the launch liquidity position.
+   * `contract` = held by a contract (no single wallet can just withdraw it),
+   * `wallet` = held by an externally-owned account that can pull it at will.
+   */
+  lpStatus: "burned" | "locked" | "unlocked" | "contract" | "wallet" | "unknown";
   /** Days until LP unlock, when locked. */
   lpUnlockDays: number | null;
   /** % of supply held by the deployer wallet. */

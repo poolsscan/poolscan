@@ -83,10 +83,23 @@ export function computeSafety(
     const frac = 0.4 + 0.6 * lin(days, 7, 180);
     const status: FactorStatus = days >= 30 ? "good" : "warn";
     push("lp", "Liquidity", `LP locked ${days}d`, 28, frac, status);
+  } else if (metrics.lpStatus === "contract") {
+    // A contract holds the position, so no single wallet can simply withdraw it.
+    // We stop short of full marks: the holder's terms aren't verifiable on-chain.
+    push(
+      "lp",
+      "Liquidity",
+      "Launch LP held by a contract, not a wallet",
+      28,
+      0.75,
+      "good",
+    );
+  } else if (metrics.lpStatus === "wallet") {
+    push("lp", "Liquidity", "Launch LP sits in a wallet — withdrawable", 28, 0, "bad");
   } else if (metrics.lpStatus === "unlocked") {
     push("lp", "Liquidity", "LP unlocked — can be pulled anytime", 28, 0, "bad");
   } else {
-    unknown("lp", "Liquidity", 28, "LP status not read yet");
+    unknown("lp", "Liquidity", 28, "No launch LP position found yet");
   }
 
   // Owner permissions renounced (weight 14)
