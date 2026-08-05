@@ -9,6 +9,9 @@ import { compact, usd } from "@/lib/format";
 import { TIER_UI } from "@/lib/ui";
 import type { SafetyTier } from "@/lib/types";
 
+/** Re-render the feed often — a launch board that lags is a stale board. */
+export const revalidate = 30;
+
 const TIER_ORDER: SafetyTier[] = ["deep", "wading", "shallow", "puddle"];
 const TIER_COPY: Record<SafetyTier, string> = {
   deep: "LP secured, ownership clean. The rug levers are off.",

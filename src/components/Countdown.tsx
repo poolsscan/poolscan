@@ -30,9 +30,16 @@ export default function Countdown({ deadline, variant = "inline", endedLabel = "
   const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
-    setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
+    // Start ticking only after mount, and never set state straight from the
+    // effect body — the first read happens in a callback so the server-rendered
+    // placeholder hydrates cleanly without a cascading render.
+    const tick = () => setNow(Date.now());
+    const first = setTimeout(tick, 0);
+    const id = setInterval(tick, 1000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
   }, []);
 
   const remaining = now === null ? null : target - now;

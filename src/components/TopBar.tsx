@@ -42,12 +42,12 @@ export default function TopBar() {
         </nav>
 
         <div className="flex shrink-0 items-center gap-2">
-          <a
+          <Link
             href="/#waitlist"
             className="hidden rounded-full bg-[var(--color-pine)] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--color-pine-deep)] lg:inline-block"
           >
             Request early access
-          </a>
+          </Link>
 
           {/* Hamburger — phone + tablet */}
           <button
@@ -86,13 +86,13 @@ export default function TopBar() {
                 {l.badge && <Badge>{l.badge}</Badge>}
               </Link>
             ))}
-            <a
+            <Link
               href="/#waitlist"
               onClick={close}
               className="mt-2 rounded-full bg-[var(--color-pine)] px-5 py-3 text-center text-sm font-medium text-white transition-colors hover:bg-[var(--color-pine-deep)]"
             >
               Request early access
-            </a>
+            </Link>
           </nav>
         </div>
       )}

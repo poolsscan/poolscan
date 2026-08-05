@@ -9,6 +9,7 @@
  * (top-10 / dev), age, ownership. Rolling out next: live price & liquidity from
  * the Uniswap-v4 pool, and first-block sniper detection.
  */
+import { unstable_cache } from "next/cache";
 import type { MarketStats, Token, TokenMetrics } from "../types";
 import { computeSafety } from "../safety";
 
@@ -23,6 +24,23 @@ const UA = "Mozilla/5.0 (compatible; PoolScan/1.0)";
 /** TokenCreated(address tokenAddress, (string,string,string,bytes) metadata) */
 const TOKEN_CREATED_TOPIC =
   "0x4ef8284ecf42d4cd19686572ffd87f630858c82398911e776cb831de35eddbf4";
+/** Transfer(address,address,uint256) */
+const TRANSFER_TOPIC =
+  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+/**
+ * Uniswap v4 singleton that custodies every pool's tokens on this chain. It shows
+ * up as a token's largest "holder", but it is the pool itself — counting it as a
+ * whale would flag every healthy launch as concentrated.
+ */
+const POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951";
+const BURN_ADDRESSES = new Set([
+  "0x0000000000000000000000000000000000000000",
+  "0x000000000000000000000000000000000000dead",
+]);
+/** Blocks counted as "the launch" for sniper share (~0.2s blocks, so ~6 seconds). */
+const SNIPE_WINDOW_BLOCKS = 30;
+/** Below this share of supply outside the pool, distribution isn't meaningful yet. */
+const MIN_CIRCULATING_RATIO = 0.005;
 /** How many tokens end up on the board after ranking. */
 const FEED_LIMIT = 30;
 /** Of those, how many slots go to the freshest launches (rest go to top traded). */
@@ -30,7 +48,14 @@ const FRESH_SLOTS = 12;
 /** Safety valve on the market-data fan-out (30 addresses per request). */
 const MAX_MARKET_BATCHES = 120;
 
-async function bs(path: string, revalidate = 30): Promise<any> {
+/**
+ * Untyped JSON from third-party APIs (Blockscout, Dexscreener, the node). Shapes
+ * are checked at each use site rather than trusted wholesale.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Json = { [key: string]: any };
+
+async function bs(path: string, revalidate = 30): Promise<Json> {
   const res = await fetch(`${BS}${path}`, {
     headers: { "User-Agent": UA },
     next: { revalidate },
@@ -39,12 +64,17 @@ async function bs(path: string, revalidate = 30): Promise<any> {
   return res.json();
 }
 
-async function rpc(method: string, params: unknown[], revalidate = 15): Promise<any> {
+/** `revalidate: false` skips the fetch cache — for responses too big to store. */
+async function rpc<T = Json>(
+  method: string,
+  params: unknown[],
+  revalidate: number | false = 15,
+): Promise<T> {
   const res = await fetch(RPC, {
     method: "POST",
     headers: { "User-Agent": UA, "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    next: { revalidate },
+    ...(revalidate === false ? { cache: "no-store" as const } : { next: { revalidate } }),
   });
   const j = await res.json();
   return j.result;
@@ -57,29 +87,35 @@ async function rpc(method: string, params: unknown[], revalidate = 15): Promise<
  * eth_getLogs call, so there's no paging window to fall out of — tokens from
  * launch day rank alongside the ones from a minute ago.
  */
-async function listTokens(): Promise<{ address: string; block: number }[]> {
-  const logs = await rpc(
-    "eth_getLogs",
-    [{ address: FACTORY, topics: [TOKEN_CREATED_TOPIC], fromBlock: "0x0", toBlock: "latest" }],
-    60,
-  );
-  if (!Array.isArray(logs)) return [];
-  const out: { address: string; block: number }[] = [];
-  const seen = new Set<string>();
-  for (const e of logs) {
-    // first ABI word of `data` is the new token address, right-aligned
-    const addr = "0x" + String(e.data || "").slice(26, 66).toLowerCase();
-    if (!/^0x[0-9a-f]{40}$/.test(addr) || seen.has(addr)) continue;
-    seen.add(addr);
-    out.push({ address: addr, block: parseInt(e.blockNumber, 16) || 0 });
-  }
-  return out.reverse(); // newest first
-}
+const listTokens = unstable_cache(
+  async (): Promise<{ address: string; block: number }[]> => {
+    // The raw log dump is several MB — too large for the fetch cache — so it is
+    // fetched uncached and only the distilled address list is memoised.
+    const logs = await rpc<Json[]>(
+      "eth_getLogs",
+      [{ address: FACTORY, topics: [TOKEN_CREATED_TOPIC], fromBlock: "0x0", toBlock: "latest" }],
+      false,
+    );
+    if (!Array.isArray(logs)) return [];
+    const out: { address: string; block: number }[] = [];
+    const seen = new Set<string>();
+    for (const e of logs) {
+      // first ABI word of `data` is the new token address, right-aligned
+      const addr = "0x" + String(e.data || "").slice(26, 66).toLowerCase();
+      if (!/^0x[0-9a-f]{40}$/.test(addr) || seen.has(addr)) continue;
+      seen.add(addr);
+      out.push({ address: addr, block: parseInt(e.blockNumber, 16) || 0 });
+    }
+    return out.reverse(); // newest first
+  },
+  ["poolstrade-factory-launches"],
+  { revalidate: 60 },
+);
 
 /** Derive block time + head so we can turn creation blocks into an age. */
 async function chainClock(): Promise<{ latest: number; blockTime: number }> {
   try {
-    const latestHex = await rpc("eth_blockNumber", []);
+    const latestHex = await rpc<string>("eth_blockNumber", []);
     const latest = parseInt(latestHex, 16);
     const olderNum = Math.max(1, latest - 5000);
     const [head, older] = await Promise.all([
@@ -153,19 +189,37 @@ async function holderDist(
   if (supply <= 0n) return { top10Pct: null, devHoldingPct: null };
   try {
     const d = await bs(`/api/v2/tokens/${addr}/holders`);
-    const items: any[] = d.items || [];
+    const items: Json[] = d.items || [];
     if (!items.length) return { top10Pct: null, devHoldingPct: null };
-    const top10 = items
-      .slice(0, 10)
-      .reduce((s: bigint, x: any) => s + BigInt(x.value || "0"), 0n);
-    const top10Pct = Number((top10 * 10000n) / supply) / 100;
+
+    const addrOf = (x: Json) => (x.address?.hash || "").toLowerCase();
+    const valOf = (x: Json) => BigInt(x.value || "0");
+
+    // The pool's own balance isn't held by anyone — it's what's still for sale.
+    const pooled = items
+      .filter((x) => addrOf(x) === POOL_MANAGER || BURN_ADDRESSES.has(addrOf(x)))
+      .reduce((s, x) => s + valOf(x), 0n);
+    const circulating = supply - pooled;
+
+    // A token seconds old still has ~everything in the pool; "top 10 hold 100%"
+    // of a rounding error says nothing, so report it as not-yet-measurable.
+    if (circulating <= (supply * BigInt(Math.round(MIN_CIRCULATING_RATIO * 10000))) / 10000n) {
+      return { top10Pct: null, devHoldingPct: null };
+    }
+
+    const holders = items.filter(
+      (x) => addrOf(x) !== POOL_MANAGER && !BURN_ADDRESSES.has(addrOf(x)),
+    );
+    const top10 = holders.slice(0, 10).reduce((s, x) => s + valOf(x), 0n);
+    const top10Pct = Number((top10 * 10000n) / circulating) / 100;
+
     // Absent from the holder page means the deployer holds nothing of note.
     let devHoldingPct: number | null = null;
     if (creator) {
-      const dev = items.find((x: any) => (x.address?.hash || "").toLowerCase() === creator);
-      devHoldingPct = dev ? Number((BigInt(dev.value || "0") * 10000n) / supply) / 100 : 0;
+      const dev = holders.find((x) => addrOf(x) === creator);
+      devHoldingPct = dev ? Number((valOf(dev) * 10000n) / circulating) / 100 : 0;
     }
-    return { top10Pct, devHoldingPct };
+    return { top10Pct: Math.min(100, top10Pct), devHoldingPct };
   } catch {
     return { top10Pct: null, devHoldingPct: null };
   }
@@ -180,7 +234,7 @@ interface Dex {
   logoUrl?: string;
 }
 
-function toDex(pair: any): Dex {
+function toDex(pair: Json): Dex {
   return {
     price: Number(pair.priceUsd) || 0,
     change: Number(pair.priceChange?.h24) || 0,
@@ -230,6 +284,49 @@ async function dexData(addr: string): Promise<Dex | null> {
   return m[addr.toLowerCase()] ?? null;
 }
 
+/**
+ * Share of supply bought out of the pool in the first moments after launch.
+ *
+ * At launch the whole supply is routed into the v4 PoolManager, so every early
+ * buy shows up as a Transfer *from* the PoolManager. Summing those across the
+ * launch window gives the share snipers took before anyone else could react.
+ * Returns null when we can't establish the launch block.
+ */
+async function sniperShare(
+  addr: string,
+  creationBlock: number,
+  supply: bigint,
+): Promise<number | null> {
+  if (!creationBlock || supply <= 0n) return null;
+  try {
+    const logs = await rpc(
+      "eth_getLogs",
+      [
+        {
+          address: addr,
+          topics: [TRANSFER_TOPIC],
+          fromBlock: "0x" + creationBlock.toString(16),
+          toBlock: "0x" + (creationBlock + SNIPE_WINDOW_BLOCKS).toString(16),
+        },
+      ],
+      600,
+    );
+    if (!Array.isArray(logs)) return null;
+    let sniped = 0n;
+    for (const e of logs) {
+      const from = ("0x" + String(e.topics?.[1] || "").slice(26)).toLowerCase();
+      const to = ("0x" + String(e.topics?.[2] || "").slice(26)).toLowerCase();
+      // Buys leave the pool for someone else; pool top-ups and burns don't count.
+      if (from !== POOL_MANAGER) continue;
+      if (to === POOL_MANAGER || BURN_ADDRESSES.has(to)) continue;
+      sniped += BigInt(e.data || "0x0");
+    }
+    return Math.min(100, Number((sniped * 10000n) / supply) / 100);
+  } catch {
+    return null;
+  }
+}
+
 function hueFrom(addr: string): number {
   return parseInt(addr.slice(2, 8), 16) % 360;
 }
@@ -252,7 +349,7 @@ interface CodeTraits {
  */
 async function codeTraits(addr: string): Promise<CodeTraits> {
   try {
-    const code: string = await rpc("eth_getCode", [addr, "latest"], 3600);
+    const code = await rpc<string>("eth_getCode", [addr, "latest"], 3600);
     if (!code || code.length < 4) return { mintable: null, renounced: null };
     const hex = code.toLowerCase();
     return {
@@ -271,6 +368,7 @@ function assemble(
   dist: { top10Pct: number | null; devHoldingPct: number | null },
   dex: Dex | null,
   traits: CodeTraits,
+  sniperPct: number | null,
 ): Token {
   const supplyNum = Number(meta.totalSupply) / 10 ** meta.decimals;
   const priceUsd = dex?.price ?? 0;
@@ -285,7 +383,7 @@ function assemble(
     lpUnlockDays: null,
     devHoldingPct: dist.devHoldingPct,
     top10Pct: dist.top10Pct,
-    sniperPct: null,
+    sniperPct,
     contractRenounced: traits.renounced,
     mintable: traits.mintable,
   };
@@ -343,11 +441,14 @@ export async function getTokensOnchain(): Promise<Token[]> {
       try {
         const [meta, traits] = await Promise.all([tokenMeta(l.address), codeTraits(l.address)]);
         const info = creators[l.address];
-        const dist = await holderDist(l.address, meta.totalSupply, info?.creator);
         const block = l.block || info?.block || 0;
+        const [dist, snipers] = await Promise.all([
+          holderDist(l.address, meta.totalSupply, info?.creator),
+          sniperShare(l.address, block, meta.totalSupply),
+        ]);
         const ageSeconds =
           clock.latest && block ? Math.max(1, Math.round((clock.latest - block) * clock.blockTime)) : 0;
-        return assemble(l.address, meta, ageSeconds, dist, market[l.address] ?? null, traits);
+        return assemble(l.address, meta, ageSeconds, dist, market[l.address] ?? null, traits, snipers);
       } catch {
         return null;
       }
@@ -368,11 +469,14 @@ export async function getTokenOnchain(id: string): Promise<Token | null> {
       codeTraits(addr),
     ]);
     const info = creators[addr];
-    const dist = await holderDist(addr, meta.totalSupply, info?.creator);
     const block = info?.block || 0;
+    const [dist, snipers] = await Promise.all([
+      holderDist(addr, meta.totalSupply, info?.creator),
+      sniperShare(addr, block, meta.totalSupply),
+    ]);
     const ageSeconds =
       clock.latest && block ? Math.max(1, Math.round((clock.latest - block) * clock.blockTime)) : 0;
-    return assemble(addr, meta, ageSeconds, dist, dex, traits);
+    return assemble(addr, meta, ageSeconds, dist, dex, traits, snipers);
   } catch {
     return null;
   }

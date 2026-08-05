@@ -9,6 +9,8 @@ import { getToken } from "@/lib/data";
 import { age, compact, pct, shortAddr, usd } from "@/lib/format";
 import { TIER_UI } from "@/lib/ui";
 
+export const revalidate = 30;
+
 type Params = { params: Promise<{ id: string }> };
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
