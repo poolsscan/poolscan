@@ -100,6 +100,17 @@ export default async function TokenPage({ params }: Params) {
               <h2 className="serif text-xl text-[var(--color-ink)]">Why it scored {token.safety.score}</h2>
               <p className="mt-1.5 text-sm text-[var(--color-ink-soft)]">
                 Each sounding contributes to the depth reading. Green holds, amber warns, red leaks.
+                {token.safety.coverage < 1 && (
+                  <>
+                    {" "}
+                    Dashed signals aren&apos;t readable yet — they&apos;re left out of the score rather
+                    than guessed, so this reading covers{" "}
+                    <strong className="text-[var(--color-ink)]">
+                      {Math.round(token.safety.coverage * 100)}%
+                    </strong>{" "}
+                    of the checks.
+                  </>
+                )}
               </p>
               <div className="mt-5">
                 <SafetyBreakdown report={token.safety} />

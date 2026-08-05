@@ -1,6 +1,7 @@
 export type SafetyTier = "deep" | "wading" | "shallow" | "puddle";
 
-export type FactorStatus = "good" | "warn" | "bad";
+/** `unknown` = we can't measure this signal yet, so it's excluded from the score. */
+export type FactorStatus = "good" | "warn" | "bad" | "unknown";
 
 export interface SafetyFactor {
   key: string;
@@ -15,28 +16,35 @@ export interface SafetyFactor {
 }
 
 export interface SafetyReport {
-  /** 0..100 — higher is deeper / safer. */
+  /** 0..100 — higher is deeper / safer. Scored over the signals we could measure. */
   score: number;
   tier: SafetyTier;
   factors: SafetyFactor[];
   summary: string;
+  /** Share of total weight actually measured, 0..1. Below 1 means some signals are unknown. */
+  coverage: number;
 }
 
+/**
+ * On-chain signals behind the depth score. `null` means "not measured yet" —
+ * never guess a value: unmeasured signals are reported as unknown and left out
+ * of the score rather than silently invented.
+ */
 export interface TokenMetrics {
-  lpLocked: boolean;
-  lpBurned: boolean;
-  /** Days until LP unlock, null if burned or unlocked. */
+  /** How the pool's liquidity is secured. */
+  lpStatus: "burned" | "locked" | "unlocked" | "unknown";
+  /** Days until LP unlock, when locked. */
   lpUnlockDays: number | null;
   /** % of supply held by the deployer wallet. */
-  devHoldingPct: number;
+  devHoldingPct: number | null;
   /** % of supply held by the top 10 wallets. */
-  top10Pct: number;
+  top10Pct: number | null;
   /** % of supply captured by snipers in the launch block. */
-  sniperPct: number;
+  sniperPct: number | null;
   /** Owner permissions renounced (no upgrade/pause powers). */
-  contractRenounced: boolean;
+  contractRenounced: boolean | null;
   /** Supply can still be minted. */
-  mintable: boolean;
+  mintable: boolean | null;
 }
 
 export interface Token {

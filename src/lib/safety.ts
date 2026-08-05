@@ -49,7 +49,7 @@ const SUMMARY: Record<SafetyTier, string> = {
  */
 export function computeSafety(
   metrics: TokenMetrics,
-  liquidityUsd: number,
+  liquidityUsd: number | null,
 ): SafetyReport {
   const factors: SafetyFactor[] = [];
 
@@ -71,72 +71,102 @@ export function computeSafety(
     });
   };
 
+  /** A signal we can't read yet — reported plainly and left out of the score. */
+  const unknown = (key: string, label: string, weight: number, detail = "Not measured yet") =>
+    factors.push({ key, label, detail, weight, points: 0, status: "unknown" });
+
   // Liquidity secured — the single biggest rug lever (weight 28)
-  if (metrics.lpBurned) {
+  if (metrics.lpStatus === "burned") {
     push("lp", "Liquidity", "LP burned — can't be pulled", 28, 1, "good");
-  } else if (metrics.lpLocked) {
+  } else if (metrics.lpStatus === "locked") {
     const days = metrics.lpUnlockDays ?? 0;
     const frac = 0.4 + 0.6 * lin(days, 7, 180);
     const status: FactorStatus = days >= 30 ? "good" : "warn";
     push("lp", "Liquidity", `LP locked ${days}d`, 28, frac, status);
-  } else {
+  } else if (metrics.lpStatus === "unlocked") {
     push("lp", "Liquidity", "LP unlocked — can be pulled anytime", 28, 0, "bad");
+  } else {
+    unknown("lp", "Liquidity", 28, "LP status not read yet");
   }
 
   // Owner permissions renounced (weight 14)
-  push(
-    "renounce",
-    "Ownership",
-    metrics.contractRenounced ? "Renounced — no owner powers" : "Owner keys still active",
-    14,
-    metrics.contractRenounced ? 1 : 0,
-    metrics.contractRenounced ? "good" : "bad",
-  );
+  if (metrics.contractRenounced === null) {
+    unknown("renounce", "Ownership", 14, "Owner powers not read yet");
+  } else {
+    push(
+      "renounce",
+      "Ownership",
+      metrics.contractRenounced ? "Ownerless — no owner powers in the contract" : "Owner keys still active",
+      14,
+      metrics.contractRenounced ? 1 : 0,
+      metrics.contractRenounced ? "good" : "bad",
+    );
+  }
 
   // Supply mintable (weight 8)
-  push(
-    "mint",
-    "Supply",
-    metrics.mintable ? "Mint function is live" : "Fixed supply — no mint",
-    8,
-    metrics.mintable ? 0 : 1,
-    metrics.mintable ? "bad" : "good",
-  );
+  if (metrics.mintable === null) {
+    unknown("mint", "Supply", 8, "Mint capability not read yet");
+  } else {
+    push(
+      "mint",
+      "Supply",
+      metrics.mintable ? "Mint function is live" : "Fixed supply — no mint function",
+      8,
+      metrics.mintable ? 0 : 1,
+      metrics.mintable ? "bad" : "good",
+    );
+  }
 
   // Dev holdings (weight 18): 3% ideal, 20%+ is zero
-  {
-    const frac = 1 - lin(metrics.devHoldingPct, 3, 20);
-    const status: FactorStatus =
-      metrics.devHoldingPct < 5 ? "good" : metrics.devHoldingPct < 12 ? "warn" : "bad";
-    push("dev", "Dev wallet", `Deployer holds ${metrics.devHoldingPct.toFixed(1)}%`, 18, frac, status);
+  if (metrics.devHoldingPct === null) {
+    unknown("dev", "Dev wallet", 18);
+  } else {
+    const dev = metrics.devHoldingPct;
+    const frac = 1 - lin(dev, 3, 20);
+    const status: FactorStatus = dev < 5 ? "good" : dev < 12 ? "warn" : "bad";
+    push("dev", "Dev wallet", `Deployer holds ${dev.toFixed(1)}%`, 18, frac, status);
   }
 
   // Top-10 concentration (weight 14): 25% good, 70%+ zero
-  {
-    const frac = 1 - lin(metrics.top10Pct, 25, 70);
-    const status: FactorStatus =
-      metrics.top10Pct < 40 ? "good" : metrics.top10Pct < 60 ? "warn" : "bad";
-    push("top10", "Distribution", `Top 10 hold ${metrics.top10Pct.toFixed(0)}%`, 14, frac, status);
+  if (metrics.top10Pct === null) {
+    unknown("top10", "Distribution", 14);
+  } else {
+    const top = metrics.top10Pct;
+    const frac = 1 - lin(top, 25, 70);
+    const status: FactorStatus = top < 40 ? "good" : top < 60 ? "warn" : "bad";
+    push("top10", "Distribution", `Top 10 hold ${top.toFixed(0)}%`, 14, frac, status);
   }
 
   // Sniper load in launch block (weight 12): 5% good, 40%+ zero
-  {
-    const frac = 1 - lin(metrics.sniperPct, 5, 40);
-    const status: FactorStatus =
-      metrics.sniperPct < 10 ? "good" : metrics.sniperPct < 25 ? "warn" : "bad";
-    push("snipe", "Snipers", `${metrics.sniperPct.toFixed(0)}% taken at launch`, 12, frac, status);
+  if (metrics.sniperPct === null) {
+    unknown("snipe", "Snipers", 12, "Launch-block buys not analysed yet");
+  } else {
+    const snipe = metrics.sniperPct;
+    const frac = 1 - lin(snipe, 5, 40);
+    const status: FactorStatus = snipe < 10 ? "good" : snipe < 25 ? "warn" : "bad";
+    push("snipe", "Snipers", `${snipe.toFixed(0)}% taken at launch`, 12, frac, status);
   }
 
   // Liquidity depth (weight 6): $8k thin, $50k+ deep
-  {
+  if (liquidityUsd === null || liquidityUsd <= 0) {
+    unknown("depth", "Pool depth", 6, "No indexed pool yet");
+  } else {
     const frac = lin(liquidityUsd, 8_000, 50_000);
     const status: FactorStatus =
       liquidityUsd >= 25_000 ? "good" : liquidityUsd >= 8_000 ? "warn" : "bad";
     push("depth", "Pool depth", `$${Math.round(liquidityUsd / 1000)}K in the pool`, 6, frac, status);
   }
 
-  const score = Math.round(factors.reduce((s, f) => s + f.points, 0));
+  // Score over what we could actually measure, so an unmeasured signal never
+  // silently reads as a failing one. Coverage tells the reader how much is known.
+  const measuredWeight = factors
+    .filter((f) => f.status !== "unknown")
+    .reduce((s, f) => s + f.weight, 0);
+  const totalWeight = factors.reduce((s, f) => s + f.weight, 0);
+  const earned = factors.reduce((s, f) => s + f.points, 0);
+  const score = measuredWeight > 0 ? Math.round((earned / measuredWeight) * 100) : 0;
+  const coverage = totalWeight > 0 ? measuredWeight / totalWeight : 0;
   const tier = tierFor(score);
 
-  return { score, tier, factors, summary: SUMMARY[tier] };
+  return { score, tier, factors, summary: SUMMARY[tier], coverage };
 }

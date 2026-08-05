@@ -39,5 +39,7 @@ export function factorColor(status: FactorStatus): string {
     ? "var(--color-depth-deep)"
     : status === "warn"
       ? "var(--color-depth-wade)"
-      : "var(--color-depth-puddle)";
+      : status === "unknown"
+        ? "var(--color-ink-faint)"
+        : "var(--color-depth-puddle)";
 }

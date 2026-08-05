@@ -101,7 +101,12 @@ export default function DocsPage() {
           </Section>
 
           <Section id="soundings" title="The seven soundings">
-            <p>Each sounding contributes up to its weight. The weights add up to 100.</p>
+            <p>
+              Each sounding contributes up to its weight. The weights add up to 100. If a signal
+              can&apos;t be read for a token yet, it&apos;s shown as{" "}
+              <em>not scored</em> and left out entirely — the score is taken over what was actually
+              measured, and each token reports its coverage. We never fill a gap with a guess.
+            </p>
             <ul className="mt-5 divide-y divide-[var(--color-line)]">
               {SOUNDINGS.map(([name, weight, desc]) => (
                 <li key={name} className="flex gap-4 py-4">
@@ -153,6 +158,13 @@ export default function DocsPage() {
               Today the feed runs on realistic preview data so the product is fully explorable
               before launch. At the pools.trade launch it wires into live Robinhood Chain data
               through a single adapter — nothing else about the experience changes.
+            </p>
+            <p className="mt-4">
+              Today we read: ownership and mint capability (straight from the deployed bytecode),
+              holder distribution and dev-wallet share, pool depth, and live market data. Two
+              signals aren&apos;t decoded yet — <strong className="text-[var(--color-ink)]">LP
+              custody</strong> and <strong className="text-[var(--color-ink)]">launch-block
+              sniping</strong> — so they show as not scored until they are.
             </p>
             <p className="mt-4">
               Depth scores are <strong className="text-[var(--color-ink)]">heuristics</strong>, not

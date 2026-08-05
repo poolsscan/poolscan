@@ -150,23 +150,25 @@ async function holderDist(
   addr: string,
   supply: bigint,
   creator?: string,
-): Promise<{ top10Pct: number; devHoldingPct: number }> {
-  if (supply <= 0n) return { top10Pct: 0, devHoldingPct: 0 };
+): Promise<{ top10Pct: number | null; devHoldingPct: number | null }> {
+  if (supply <= 0n) return { top10Pct: null, devHoldingPct: null };
   try {
     const d = await bs(`/api/v2/tokens/${addr}/holders`);
     const items: any[] = d.items || [];
+    if (!items.length) return { top10Pct: null, devHoldingPct: null };
     const top10 = items
       .slice(0, 10)
       .reduce((s: bigint, x: any) => s + BigInt(x.value || "0"), 0n);
     const top10Pct = Number((top10 * 10000n) / supply) / 100;
-    let devHoldingPct = 0;
+    // Absent from the holder page means the deployer holds nothing of note.
+    let devHoldingPct: number | null = null;
     if (creator) {
       const dev = items.find((x: any) => (x.address?.hash || "").toLowerCase() === creator);
-      if (dev) devHoldingPct = Number((BigInt(dev.value || "0") * 10000n) / supply) / 100;
+      devHoldingPct = dev ? Number((BigInt(dev.value || "0") * 10000n) / supply) / 100 : 0;
     }
     return { top10Pct, devHoldingPct };
   } catch {
-    return { top10Pct: 0, devHoldingPct: 0 };
+    return { top10Pct: null, devHoldingPct: null };
   }
 }
 
@@ -232,32 +234,62 @@ function hueFrom(addr: string): number {
   return parseInt(addr.slice(2, 8), 16) % 360;
 }
 
+/** 4-byte selectors we look for directly in the deployed bytecode. */
+const SEL = {
+  mint: ["40c10f19", "a0712d68", "94bf804d"], // mint(address,uint256) / mint(uint256) / mint(uint256,address)
+  owner: ["8da5cb5b", "f2fde38b", "715018a6"], // owner() / transferOwnership() / renounceOwnership()
+};
+
+interface CodeTraits {
+  mintable: boolean | null;
+  renounced: boolean | null;
+}
+
+/**
+ * Read the token's deployed bytecode and look for mint / ownership entry points.
+ * A contract whose code contains no owner or mint selector simply cannot be
+ * paused, re-owned or inflated — that's a fact we can state, not a guess.
+ */
+async function codeTraits(addr: string): Promise<CodeTraits> {
+  try {
+    const code: string = await rpc("eth_getCode", [addr, "latest"], 3600);
+    if (!code || code.length < 4) return { mintable: null, renounced: null };
+    const hex = code.toLowerCase();
+    return {
+      mintable: SEL.mint.some((s) => hex.includes(s)),
+      renounced: !SEL.owner.some((s) => hex.includes(s)),
+    };
+  } catch {
+    return { mintable: null, renounced: null };
+  }
+}
+
 function assemble(
   addr: string,
   meta: Meta,
   ageSeconds: number,
-  dist: { top10Pct: number; devHoldingPct: number },
+  dist: { top10Pct: number | null; devHoldingPct: number | null },
   dex: Dex | null,
+  traits: CodeTraits,
 ): Token {
   const supplyNum = Number(meta.totalSupply) / 10 ** meta.decimals;
   const priceUsd = dex?.price ?? 0;
   const liquidityUsd = dex?.liquidity ?? 0;
   const marketCapUsd = dex?.mcap || (priceUsd > 0 ? priceUsd * supplyNum : 0);
 
-  // pools.trade model: liquidity lives in the protocol curve/pool (not dev-pullable
-  // pre-graduation), supply is fixed, and the token is ownerless. Distribution is
-  // measured live; price/liquidity/sniper are the next data pass.
+  // Only what we can actually read goes in. LP custody and launch-block sniping
+  // aren't decoded yet, so they stay null — reported as unknown rather than
+  // guessed, and excluded from the score.
   const metrics: TokenMetrics = {
-    lpLocked: true,
-    lpBurned: false,
-    lpUnlockDays: 365,
+    lpStatus: "unknown",
+    lpUnlockDays: null,
     devHoldingPct: dist.devHoldingPct,
     top10Pct: dist.top10Pct,
-    sniperPct: 8,
-    contractRenounced: true,
-    mintable: false,
+    sniperPct: null,
+    contractRenounced: traits.renounced,
+    mintable: traits.mintable,
   };
-  const safety = computeSafety(metrics, liquidityUsd > 0 ? liquidityUsd : 25_000);
+  const safety = computeSafety(metrics, liquidityUsd > 0 ? liquidityUsd : null);
 
   return {
     id: addr,
@@ -309,13 +341,13 @@ export async function getTokensOnchain(): Promise<Token[]> {
   const tokens = await Promise.all(
     list.map(async (l) => {
       try {
-        const meta = await tokenMeta(l.address);
+        const [meta, traits] = await Promise.all([tokenMeta(l.address), codeTraits(l.address)]);
         const info = creators[l.address];
         const dist = await holderDist(l.address, meta.totalSupply, info?.creator);
         const block = l.block || info?.block || 0;
         const ageSeconds =
           clock.latest && block ? Math.max(1, Math.round((clock.latest - block) * clock.blockTime)) : 0;
-        return assemble(l.address, meta, ageSeconds, dist, market[l.address] ?? null);
+        return assemble(l.address, meta, ageSeconds, dist, market[l.address] ?? null, traits);
       } catch {
         return null;
       }
@@ -328,18 +360,19 @@ export async function getTokenOnchain(id: string): Promise<Token | null> {
   const addr = id.toLowerCase();
   if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) return null;
   try {
-    const [meta, clock, creators, dex] = await Promise.all([
+    const [meta, clock, creators, dex, traits] = await Promise.all([
       tokenMeta(addr),
       chainClock(),
       creatorsOf([addr]),
       dexData(addr),
+      codeTraits(addr),
     ]);
     const info = creators[addr];
     const dist = await holderDist(addr, meta.totalSupply, info?.creator);
     const block = info?.block || 0;
     const ageSeconds =
       clock.latest && block ? Math.max(1, Math.round((clock.latest - block) * clock.blockTime)) : 0;
-    return assemble(addr, meta, ageSeconds, dist, dex);
+    return assemble(addr, meta, ageSeconds, dist, dex, traits);
   } catch {
     return null;
   }

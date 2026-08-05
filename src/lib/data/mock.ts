@@ -37,8 +37,7 @@ function hexAddr(rng: () => number): string {
 function makeMetrics(rng: () => number, rugged: boolean): TokenMetrics {
   if (rugged) {
     return {
-      lpLocked: false,
-      lpBurned: false,
+      lpStatus: "unlocked",
       lpUnlockDays: null,
       devHoldingPct: 12 + rng() * 25,
       top10Pct: 55 + rng() * 35,
@@ -50,8 +49,7 @@ function makeMetrics(rng: () => number, rugged: boolean): TokenMetrics {
   const burned = rng() > 0.55;
   const locked = !burned && rng() > 0.25;
   return {
-    lpBurned: burned,
-    lpLocked: locked,
+    lpStatus: burned ? "burned" : locked ? "locked" : "unlocked",
     lpUnlockDays: locked ? Math.round(7 + rng() * 350) : null,
     devHoldingPct: rng() * 9,
     top10Pct: 20 + rng() * 40,
