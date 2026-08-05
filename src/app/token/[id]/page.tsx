@@ -30,12 +30,17 @@ export default async function TokenPage({ params }: Params) {
   const ui = TIER_UI[token.safety.tier];
   const graduated = token.graduationPct >= 100;
 
+  const na = (v: number, f: (n: number) => string) => (v > 0 ? f(v) : "—");
   const market: [string, string, string?][] = [
-    ["Price", usd(token.priceUsd)],
-    ["Since launch", pct(token.changePct), token.changePct >= 0 ? "up" : "down"],
-    ["Market cap", usd(token.marketCapUsd)],
-    ["Volume", usd(token.volumeUsd)],
-    ["Liquidity", usd(token.liquidityUsd)],
+    ["Price", na(token.priceUsd, usd)],
+    [
+      "Since launch",
+      token.priceUsd > 0 ? pct(token.changePct) : "—",
+      token.priceUsd > 0 ? (token.changePct >= 0 ? "up" : "down") : undefined,
+    ],
+    ["Market cap", na(token.marketCapUsd, usd)],
+    ["Volume", na(token.volumeUsd, usd)],
+    ["Liquidity", na(token.liquidityUsd, usd)],
     ["Holders", compact(token.holders)],
     ["Age", age(token.ageSeconds)],
   ];

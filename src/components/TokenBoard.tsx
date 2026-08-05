@@ -40,7 +40,7 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: "deep", label: "Deep only" },
 ];
 
-export default function TokenBoard({ initial }: { initial: Token[] }) {
+export default function TokenBoard({ initial, simulate = false }: { initial: Token[]; simulate?: boolean }) {
   const router = useRouter();
   const [tokens, setTokens] = useState<Token[]>(initial);
   const [sortKey, setSortKey] = useState<SortKey>("age");
@@ -52,7 +52,7 @@ export default function TokenBoard({ initial }: { initial: Token[] }) {
 
   // Live simulation — client only, so no hydration drift.
   useEffect(() => {
-    if (!live) return;
+    if (!live || !simulate) return;
     const tick = setInterval(() => {
       setTokens((ts) =>
         ts.map((t) => {
@@ -76,7 +76,7 @@ export default function TokenBoard({ initial }: { initial: Token[] }) {
       clearInterval(tick);
       clearInterval(spawn);
     };
-  }, [live]);
+  }, [live, simulate]);
 
   const rows = useMemo(() => {
     const filtered = tokens.filter((t) =>
@@ -177,7 +177,7 @@ export default function TokenBoard({ initial }: { initial: Token[] }) {
                           >
                             {t.symbol}
                           </Link>
-                          <span className="nums text-xs text-[var(--color-ink-faint)]">{usd(t.priceUsd)}</span>
+                          <span className="nums text-xs text-[var(--color-ink-faint)]">{t.priceUsd > 0 ? usd(t.priceUsd) : "—"}</span>
                         </div>
                         <span className="truncate text-xs text-[var(--color-ink-soft)]">{t.name}</span>
                       </div>
@@ -186,17 +186,26 @@ export default function TokenBoard({ initial }: { initial: Token[] }) {
                   <td className="px-3 py-3.5 text-right align-middle hidden sm:table-cell">
                     <span
                       className="nums text-xs font-medium"
-                      style={{ color: t.changePct >= 0 ? "var(--color-depth-deep)" : "var(--color-depth-puddle)" }}
+                      style={{
+                        color:
+                          t.priceUsd <= 0
+                            ? "var(--color-ink-faint)"
+                            : t.changePct >= 0
+                              ? "var(--color-depth-deep)"
+                              : "var(--color-depth-puddle)",
+                      }}
                     >
-                      {pct(t.changePct)}
+                      {t.priceUsd > 0 ? pct(t.changePct) : "—"}
                     </span>
                   </td>
-                  <td className="px-3 py-3.5 text-right align-middle nums text-[var(--color-ink)] hidden md:table-cell">{usd(t.volumeUsd)}</td>
-                  <td className="px-3 py-3.5 text-right align-middle nums text-[var(--color-ink-soft)] hidden lg:table-cell">{usd(t.liquidityUsd)}</td>
-                  <td className="px-3 py-3.5 text-right align-middle nums text-[var(--color-ink-soft)] hidden sm:table-cell">{usd(t.marketCapUsd)}</td>
+                  <td className="px-3 py-3.5 text-right align-middle nums text-[var(--color-ink)] hidden md:table-cell">{t.volumeUsd > 0 ? usd(t.volumeUsd) : "—"}</td>
+                  <td className="px-3 py-3.5 text-right align-middle nums text-[var(--color-ink-soft)] hidden lg:table-cell">{t.liquidityUsd > 0 ? usd(t.liquidityUsd) : "—"}</td>
+                  <td className="px-3 py-3.5 text-right align-middle nums text-[var(--color-ink-soft)] hidden sm:table-cell">{t.marketCapUsd > 0 ? usd(t.marketCapUsd) : "—"}</td>
                   <td className="px-3 py-3.5 text-right align-middle nums text-[var(--color-ink-soft)] hidden lg:table-cell">{compact(t.holders)}</td>
                   <td className="px-3 py-3.5 align-middle hidden xl:table-cell">
-                    {graduated ? (
+                    {t.graduationPct <= 0 ? (
+                      <span className="nums block text-right text-[var(--color-ink-faint)]">—</span>
+                    ) : graduated ? (
                       <span className="ml-auto flex w-fit items-center gap-1 rounded-full bg-[var(--color-mint-1)] px-2 py-0.5 text-xs text-[var(--color-pine)]">
                         Graduated
                       </span>

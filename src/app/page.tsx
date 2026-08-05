@@ -5,7 +5,7 @@ import DepthBadge from "@/components/DepthBadge";
 import Countdown from "@/components/Countdown";
 import { EARLY_ACCESS_DEADLINE_ISO } from "@/lib/config";
 import { getStats, getTokens } from "@/lib/data";
-import { compact, usd } from "@/lib/format";
+import { compact } from "@/lib/format";
 import { TIER_UI } from "@/lib/ui";
 import type { SafetyTier } from "@/lib/types";
 
@@ -32,10 +32,10 @@ export default async function Home() {
   const featured = tokens.find((t) => t.safety.tier === "deep") ?? tokens[0];
 
   const statTiles = [
-    { label: "Launched today", value: compact(stats.launchedToday) },
-    { label: "Volume 24h", value: usd(stats.totalVolumeUsd) },
-    { label: "Graduated", value: compact(stats.graduated) },
-    { label: "Rugged today", value: compact(stats.ruggedToday), danger: true },
+    { label: "Tokens launched", value: compact(stats.launchedToday) },
+    { label: "On the board", value: compact(tokens.length) },
+    { label: "Avg depth", value: `${stats.avgSafety}/100` },
+    { label: "Puddles flagged", value: compact(stats.ruggedToday), danger: true },
   ];
 
   return (
@@ -118,7 +118,7 @@ export default async function Home() {
         </div>
         <TokenBoard initial={tokens} />
         <p className="mt-3 text-center text-xs text-[var(--color-ink-faint)]">
-          Preview data — the live feed wires into pools.trade on Robinhood Chain at launch.
+          Live from Robinhood Chain · pools.trade factory 0x000000e2… — price &amp; liquidity rolling out
         </p>
       </section>
 
