@@ -33,13 +33,13 @@ export function tierLabel(tier: SafetyTier): string {
 }
 
 const SUMMARY: Record<SafetyTier, string> = {
-  deep: "Solid footing. Liquidity is secured and ownership looks clean — the usual rug levers are off the table.",
+  deep: "Solid footing. Every signal we could read came back clean — the usual rug levers look to be off the table.",
   wading:
     "Wade in carefully. A couple of risk signals are raised; size your position for the ones that could bite.",
   shallow:
-    "Shallow and choppy. Multiple red flags — concentrated supply or unsecured liquidity. Easy to get stuck.",
+    "Shallow and choppy. Multiple red flags — concentrated supply, a live mint, or a thin pool. Easy to get stuck.",
   puddle:
-    "Barely wet. This has the shape of a classic rug — unsecured LP, live mint, or supply stacked in a few wallets.",
+    "Barely wet. This has the shape of a classic rug — live mint, owner keys still armed, or supply stacked in a few wallets.",
 };
 
 /**

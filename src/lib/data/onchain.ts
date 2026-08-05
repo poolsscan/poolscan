@@ -20,12 +20,15 @@ const FACTORY = (
 
 // Both endpoints reject the default fetch/urllib UA — a browser UA is required.
 const UA = "Mozilla/5.0 (compatible; PoolScan/1.0)";
-/** How many factory log pages to crawl (50 launches per page). */
-const LOG_PAGES = 8;
+/** TokenCreated(address tokenAddress, (string,string,string,bytes) metadata) */
+const TOKEN_CREATED_TOPIC =
+  "0x4ef8284ecf42d4cd19686572ffd87f630858c82398911e776cb831de35eddbf4";
 /** How many tokens end up on the board after ranking. */
 const FEED_LIMIT = 30;
 /** Of those, how many slots go to the freshest launches (rest go to top traded). */
 const FRESH_SLOTS = 12;
+/** Safety valve on the market-data fan-out (30 addresses per request). */
+const MAX_MARKET_BATCHES = 120;
 
 async function bs(path: string, revalidate = 30): Promise<any> {
   const res = await fetch(`${BS}${path}`, {
@@ -47,34 +50,30 @@ async function rpc(method: string, params: unknown[], revalidate = 15): Promise<
   return j.result;
 }
 
-/** Every pools.trade token, read from the factory's TokenCreated logs (newest first). */
-async function listTokens(limit: number): Promise<{ address: string; block: number }[]> {
-  const items: any[] = [];
-  let next: Record<string, any> | null = null;
-  for (let page = 0; page < LOG_PAGES; page++) {
-    const qs = next
-      ? "?" + new URLSearchParams(Object.entries(next).map(([k, v]) => [k, String(v)])).toString()
-      : "";
-    const data: any = await bs(`/api/v2/addresses/${FACTORY}/logs${qs}`);
-    items.push(...(data.items || []));
-    next = data.next_page_params || null;
-    if (!next) break;
-  }
+/**
+ * Every token the pools.trade factory has ever created, newest first.
+ *
+ * The node serves the factory's whole TokenCreated history in a single
+ * eth_getLogs call, so there's no paging window to fall out of — tokens from
+ * launch day rank alongside the ones from a minute ago.
+ */
+async function listTokens(): Promise<{ address: string; block: number }[]> {
+  const logs = await rpc(
+    "eth_getLogs",
+    [{ address: FACTORY, topics: [TOKEN_CREATED_TOPIC], fromBlock: "0x0", toBlock: "latest" }],
+    60,
+  );
+  if (!Array.isArray(logs)) return [];
   const out: { address: string; block: number }[] = [];
-  for (const it of items) {
-    let addr: string | undefined;
-    const params = it.decoded?.parameters as { name: string; value: any }[] | undefined;
-    if (params?.length) {
-      addr = (params.find((p) => p.name === "tokenAddress")?.value ?? params[0]?.value) as string;
-    } else if (typeof it.data === "string" && it.data.length >= 66) {
-      addr = "0x" + it.data.slice(26, 66);
-    }
-    if (addr && /^0x[0-9a-fA-F]{40}$/.test(addr)) {
-      out.push({ address: addr.toLowerCase(), block: Number(it.block_number) || 0 });
-    }
-    if (out.length >= limit) break;
+  const seen = new Set<string>();
+  for (const e of logs) {
+    // first ABI word of `data` is the new token address, right-aligned
+    const addr = "0x" + String(e.data || "").slice(26, 66).toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(addr) || seen.has(addr)) continue;
+    seen.add(addr);
+    out.push({ address: addr, block: parseInt(e.blockNumber, 16) || 0 });
   }
-  return out;
+  return out.reverse(); // newest first
 }
 
 /** Derive block time + head so we can turn creation blocks into an age. */
@@ -201,6 +200,7 @@ async function dexBatch(addrs: string[]): Promise<Record<string, Dex>> {
   const CHUNK = 30;
   const groups: string[][] = [];
   for (let i = 0; i < addrs.length; i += CHUNK) groups.push(addrs.slice(i, i + CHUNK));
+  if (groups.length > MAX_MARKET_BATCHES) groups.length = MAX_MARKET_BATCHES;
   await Promise.all(
     groups.map(async (group) => {
       try {
@@ -312,7 +312,7 @@ function assemble(
 
 export async function getTokensOnchain(): Promise<Token[]> {
   // 1. Every launch the pools.trade factory has ever minted, newest first.
-  const all = await listTokens(LOG_PAGES * 50);
+  const all = await listTokens();
   if (!all.length) return [];
 
   // 2. Cheap batch pass for market data across the whole history.
@@ -379,13 +379,10 @@ export async function getTokenOnchain(id: string): Promise<Token | null> {
 }
 
 export async function getStatsOnchain(): Promise<MarketStats> {
-  let launched = 0;
-  try {
-    const c = await bs(`/api/v2/addresses/${FACTORY}/counters`);
-    launched = Number(c.transactions_count || 0);
-  } catch {
-    /* ignore */
-  }
+  // Total launches straight from the factory's own event history.
+  const launched = await listTokens()
+    .then((l) => l.length)
+    .catch(() => 0);
   const tokens = await getTokensOnchain().catch(() => [] as Token[]);
   const avgSafety = tokens.length
     ? Math.round(tokens.reduce((s, t) => s + t.safety.score, 0) / tokens.length)
