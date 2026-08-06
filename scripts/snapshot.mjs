@@ -36,9 +36,24 @@ const FIRST_FACTORY_BLOCK = 4_727_385;
 const SNIPE_WINDOW_BLOCKS = 30;
 const MIN_CIRCULATING_RATIO = 0.005;
 
-/** How many tokens the snapshot carries: newest + most traded. */
-const NEWEST_COUNT = 30;
-const TOP_TRADED_COUNT = 30;
+/**
+ * What earns a place on the board. A launch feed that only shows the newest
+ * pools misses the ones people are actually trading, so the snapshot carries
+ * four overlapping views of the same history.
+ */
+const PICKS = [
+  { tag: "new", count: 26, rank: null },
+  { tag: "volume", count: 20, rank: (m) => m.volume },
+  { tag: "mcap", count: 20, rank: (m) => m.mcap },
+  // Traded heavily for its size — how something small starts trending.
+  {
+    tag: "trending",
+    count: 16,
+    rank: (m) =>
+      m.liquidity >= 5_000 && m.volume >= 25_000 ? m.volume / Math.max(m.mcap, 1_000) : 0,
+  },
+];
+const MAX_TOKENS = 80;
 
 /** What the site fetches — kept small. */
 const OUT = process.argv[2] || "snapshot/tokens.json";
@@ -271,7 +286,7 @@ async function creatorsOf(addrs) {
   return map;
 }
 
-async function enrich(launch, market, creators, clock) {
+async function enrich(launch, market, creators, clock, tags = []) {
   const { address } = launch;
   const meta = await bs(`/api/v2/tokens/${address}`).catch(() => null);
   if (!meta) return null;
@@ -291,6 +306,7 @@ async function enrich(launch, market, creators, clock) {
     id: address,
     name: meta.name || "Unknown",
     symbol: meta.symbol || "?",
+    tags,
     block,
     ageSeconds:
       clock.latest && block ? Math.max(1, Math.round((clock.latest - block) * clock.blockTime)) : 0,
@@ -353,14 +369,25 @@ async function main() {
   const market = await dexBatch(launches.map((l) => l.address));
   console.log(`market data for ${Object.keys(market).length} tokens`);
 
-  const newest = [...launches].reverse().slice(0, NEWEST_COUNT);
-  const topTraded = [...launches]
-    .filter((l) => (market[l.address]?.volume ?? 0) > 0)
-    .sort((a, b) => (market[b.address]?.volume ?? 0) - (market[a.address]?.volume ?? 0))
-    .slice(0, TOP_TRADED_COUNT);
-
+  // Build each view, remembering which ones earned a token its place.
+  const newestFirst = [...launches].reverse();
+  const tags = new Map();
   const chosen = new Map();
-  for (const l of [...newest, ...topTraded]) chosen.set(l.address, l);
+  for (const pick of PICKS) {
+    const ranked = pick.rank
+      ? newestFirst
+          .map((l) => ({ l, score: pick.rank(market[l.address] || {}) || 0 }))
+          .filter((x) => x.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .map((x) => x.l)
+      : newestFirst;
+    for (const l of ranked.slice(0, pick.count)) {
+      if (!chosen.has(l.address) && chosen.size >= MAX_TOKENS) continue;
+      chosen.set(l.address, l);
+      tags.set(l.address, [...(tags.get(l.address) || []), pick.tag]);
+    }
+    console.log(`  ${pick.tag}: ${Math.min(pick.count, ranked.length)}`);
+  }
   const shortlist = [...chosen.values()];
   console.log(`enriching ${shortlist.length} tokens…`);
 
@@ -368,7 +395,7 @@ async function main() {
   const tokens = [];
   for (const l of shortlist) {
     try {
-      const t = await enrich(l, market, creators, clock);
+      const t = await enrich(l, market, creators, clock, tags.get(l.address) || []);
       if (t) tokens.push(t);
     } catch (e) {
       console.log(`  skip ${l.address}: ${e.message}`);

@@ -46,18 +46,27 @@ export async function getToken(id: string): Promise<Token | null> {
   if (DATA_SOURCE !== "mock") {
     // Read this one live: a detail page is a single token, so it's cheap, and
     // fresher than the snapshot's last run.
-    try {
-      const t = await getTokenOnchain(id);
-      if (t) return t;
-    } catch (e) {
-      console.error("[data] on-chain getToken failed:", e);
+    const [live, snap] = await Promise.all([
+      getTokenOnchain(id).catch((e) => {
+        console.error("[data] on-chain getToken failed:", e);
+        return null;
+      }),
+      getTokenSnapshot(id).catch(() => null),
+    ]);
+    // Prefer the live read, but let the snapshot fill anything it couldn't
+    // establish — a creation block that didn't resolve shouldn't show as "0s old".
+    if (live) {
+      return snap
+        ? {
+            ...live,
+            ageSeconds: live.ageSeconds > 0 ? live.ageSeconds : snap.ageSeconds,
+            logoUrl: live.logoUrl ?? snap.logoUrl,
+            tags: live.tags ?? snap.tags,
+            holders: live.holders || snap.holders,
+          }
+        : live;
     }
-    try {
-      const t = await getTokenSnapshot(id);
-      if (t) return t;
-    } catch (e) {
-      console.error("[data] snapshot getToken failed:", e);
-    }
+    if (snap) return snap;
     if (!MOCK_FALLBACK_ALLOWED) return null;
   }
   return mockToken(id) ?? null;

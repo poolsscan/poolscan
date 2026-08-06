@@ -179,7 +179,21 @@ export function computeSafety(
   const earned = factors.reduce((s, f) => s + f.points, 0);
   const score = measuredWeight > 0 ? Math.round((earned / measuredWeight) * 100) : 0;
   const coverage = totalWeight > 0 ? measuredWeight / totalWeight : 0;
-  const tier = tierFor(score);
 
-  return { score, tier, factors, summary: SUMMARY[tier], coverage };
+  // A score out of what we could read must not read as a clean bill of health.
+  // If the signals we couldn't reach are the risky ones, everything remaining
+  // can pass and still leave the real question open — so cap the verdict by how
+  // much of the picture we actually have.
+  const ceiling: SafetyTier =
+    coverage >= 0.75 ? "deep" : coverage >= 0.4 ? "wading" : "shallow";
+  const order: SafetyTier[] = ["puddle", "shallow", "wading", "deep"];
+  const raw = tierFor(score);
+  const tier = order.indexOf(raw) > order.indexOf(ceiling) ? ceiling : raw;
+
+  const summary =
+    tier !== raw
+      ? `${SUMMARY[tier]} We could only read ${Math.round(coverage * 100)}% of the checks, so this is as far as the reading goes — not a clean bill of health.`
+      : SUMMARY[tier];
+
+  return { score, tier, factors, summary, coverage };
 }

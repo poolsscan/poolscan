@@ -275,7 +275,7 @@ function toDex(pair: Json): Dex {
  * Live market data from Dexscreener for many tokens at once (30 per request).
  * Keeps, per token, the pair with the deepest liquidity.
  */
-async function dexBatch(addrs: string[]): Promise<Record<string, Dex>> {
+export async function dexBatch(addrs: string[]): Promise<Record<string, Dex>> {
   const out: Record<string, Dex> = {};
   const CHUNK = 30;
   const groups: string[][] = [];

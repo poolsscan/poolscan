@@ -11,7 +11,23 @@ import DepthBadge from "./DepthBadge";
 import TokenAvatar from "./TokenAvatar";
 
 type SortKey = "age" | "changePct" | "volumeUsd" | "liquidityUsd" | "marketCapUsd" | "holders" | "graduationPct" | "safety";
-type Filter = "all" | "deep" | "safe";
+type Filter = "all" | "deep" | "safe" | "new" | "trending" | "mcap";
+
+/** Live market data the board refreshes between snapshots. */
+interface LivePrice {
+  priceUsd: number;
+  changePct: number;
+  volumeUsd: number;
+  liquidityUsd: number;
+  marketCapUsd: number;
+}
+
+const TAG_LABEL: Record<string, string> = {
+  new: "New",
+  trending: "Trending",
+  mcap: "Top cap",
+  volume: "Hot",
+};
 
 const ACCESS: Record<SortKey, (t: Token) => number> = {
   age: (t) => t.ageSeconds,
@@ -35,7 +51,10 @@ const COLS: { key: SortKey; label: string; cls: string }[] = [
 ];
 
 const FILTERS: { key: Filter; label: string }[] = [
-  { key: "all", label: "All pools" },
+  { key: "all", label: "All" },
+  { key: "new", label: "New" },
+  { key: "trending", label: "Trending" },
+  { key: "mcap", label: "Top cap" },
   { key: "safe", label: "Hide puddles" },
   { key: "deep", label: "Deep only" },
 ];
@@ -51,7 +70,46 @@ export default function TokenBoard({ initial, simulate = false }: { initial: Tok
   const [query, setQuery] = useState("");
   const reserveRef = useRef(0);
 
-  // Live simulation — client only, so no hydration drift.
+  // Prices move constantly while the snapshot only refreshes every few minutes,
+  // so top them up in place. Ages tick locally between polls.
+  useEffect(() => {
+    if (!live || simulate) return;
+    let cancelled = false;
+
+    const refresh = async () => {
+      const ids = initial.map((t) => t.id).join(",");
+      if (!ids) return;
+      try {
+        const res = await fetch(`/api/prices?ids=${ids}`);
+        if (!res.ok) return;
+        const { prices } = (await res.json()) as { prices: Record<string, LivePrice> };
+        if (cancelled || !prices) return;
+        setTokens((ts) =>
+          ts.map((t) => {
+            const p = prices[t.id.toLowerCase()];
+            return p && p.priceUsd > 0 ? { ...t, ...p } : t;
+          }),
+        );
+      } catch {
+        /* keep the numbers we already have */
+      }
+    };
+
+    const first = setTimeout(refresh, 1500);
+    const poll = setInterval(refresh, 30_000);
+    const tick = setInterval(
+      () => setTokens((ts) => ts.map((t) => ({ ...t, ageSeconds: t.ageSeconds + 5 }))),
+      5000,
+    );
+    return () => {
+      cancelled = true;
+      clearTimeout(first);
+      clearInterval(poll);
+      clearInterval(tick);
+    };
+  }, [live, simulate, initial]);
+
+  // Mock-data simulation — development only.
   useEffect(() => {
     if (!live || !simulate) return;
     const tick = setInterval(() => {
@@ -84,9 +142,15 @@ export default function TokenBoard({ initial, simulate = false }: { initial: Tok
 
   const rows = useMemo(() => {
     const filtered = tokens.filter((t) => {
-      const tierOk =
-        filter === "all" ? true : filter === "deep" ? t.safety.tier === "deep" : t.safety.tier !== "puddle";
-      if (!tierOk) return false;
+      const ok =
+        filter === "all"
+          ? true
+          : filter === "deep"
+            ? t.safety.tier === "deep"
+            : filter === "safe"
+              ? t.safety.tier !== "puddle"
+              : (t.tags ?? []).includes(filter);
+      if (!ok) return false;
       if (!q) return true;
       return (
         t.symbol.toLowerCase().includes(q) ||
@@ -204,6 +268,17 @@ export default function TokenBoard({ initial, simulate = false }: { initial: Tok
                             {t.symbol}
                           </Link>
                           <span className="nums text-xs text-[var(--color-ink-faint)]">{t.priceUsd > 0 ? usd(t.priceUsd) : "—"}</span>
+                          {(t.tags ?? [])
+                            .filter((tag) => tag === "trending" || tag === "mcap")
+                            .slice(0, 1)
+                            .map((tag) => (
+                              <span
+                                key={tag}
+                                className="rounded-full bg-[var(--color-mint-1)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-pine)]"
+                              >
+                                {TAG_LABEL[tag]}
+                              </span>
+                            ))}
                         </div>
                         <span className="truncate text-xs text-[var(--color-ink-soft)]">{t.name}</span>
                       </div>

@@ -20,6 +20,7 @@ interface SnapshotToken {
   id: string;
   name: string;
   symbol: string;
+  tags?: string[];
   block: number;
   ageSeconds: number;
   holders: number;
@@ -52,6 +53,7 @@ function toToken(t: SnapshotToken, ageOffsetSeconds: number): Token {
     symbol: t.symbol,
     hue: hueFrom(t.id),
     logoUrl: t.logoUrl,
+    tags: t.tags,
     // The snapshot's ages were true when it was written; carry them forward.
     ageSeconds: Math.max(1, Math.round(t.ageSeconds + ageOffsetSeconds)),
     priceUsd: t.priceUsd,

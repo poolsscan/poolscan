@@ -60,6 +60,8 @@ export interface Token {
   hue: number;
   /** Token logo, when the indexer has one. */
   logoUrl?: string;
+  /** Why this token is on the board: "new" | "volume" | "mcap" | "trending". */
+  tags?: string[];
   /** Seconds since launch. */
   ageSeconds: number;
   priceUsd: number;

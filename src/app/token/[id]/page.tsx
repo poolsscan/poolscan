@@ -93,6 +93,11 @@ export default async function TokenPage({ params }: Params) {
                   Depth reading {token.safety.score}
                   <span className="text-[var(--color-ink-faint)]">/100</span>
                 </p>
+                {token.safety.coverage < 1 && (
+                  <p className="mono mt-1 text-xs text-[var(--color-ink-faint)]">
+                    across {Math.round(token.safety.coverage * 100)}% of checks read
+                  </p>
+                )}
                 <p className="mt-2 text-sm leading-relaxed text-[var(--color-ink-soft)]">
                   {token.safety.summary}
                 </p>
