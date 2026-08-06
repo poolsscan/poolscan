@@ -19,8 +19,13 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const token = await getToken(id);
   if (!token) return { title: "Token not found" };
   const ui = TIER_UI[token.safety.tier];
+  // Only claim a score out of 100 when we actually read all of the checks —
+  // "100/100 (Wading)" otherwise reads as a contradiction.
+  const partial = token.safety.coverage < 1;
   return {
-    title: `${token.symbol} — depth ${token.safety.score}/100 (${ui.label})`,
+    title: partial
+      ? `${token.symbol} — ${ui.label} · ${Math.round(token.safety.coverage * 100)}% of checks read`
+      : `${token.symbol} — depth ${token.safety.score}/100 (${ui.label})`,
     description: `${token.name} (${token.symbol}) on pools.trade: depth ${token.safety.score}/100, ${usd(token.liquidityUsd)} liquidity, ${compact(token.holders)} holders.`,
   };
 }
@@ -91,11 +96,13 @@ export default async function TokenPage({ params }: Params) {
                 </p>
                 <p className="mt-1.5 serif text-2xl text-[var(--color-ink)]">
                   Depth reading {token.safety.score}
-                  <span className="text-[var(--color-ink-faint)]">/100</span>
+                  {token.safety.coverage >= 1 && (
+                    <span className="text-[var(--color-ink-faint)]">/100</span>
+                  )}
                 </p>
                 {token.safety.coverage < 1 && (
                   <p className="mono mt-1 text-xs text-[var(--color-ink-faint)]">
-                    across {Math.round(token.safety.coverage * 100)}% of checks read
+                    across the {Math.round(token.safety.coverage * 100)}% of checks we could read
                   </p>
                 )}
                 <p className="mt-2 text-sm leading-relaxed text-[var(--color-ink-soft)]">
