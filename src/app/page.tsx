@@ -9,8 +9,14 @@ import { compact, usd } from "@/lib/format";
 import { TIER_UI } from "@/lib/ui";
 import type { SafetyTier } from "@/lib/types";
 
-/** Re-render the feed often — a launch board that lags is a stale board. */
-export const revalidate = 30;
+/**
+ * Render per request rather than baking a snapshot at build time: a board built
+ * during the build would be frozen (and empty if the chain was unreachable then).
+ * The underlying reads are cached, so this stays fast.
+ */
+export const dynamic = "force-dynamic";
+/** Cold renders fan out across the chain and the indexer; give them room. */
+export const maxDuration = 60;
 
 const TIER_ORDER: SafetyTier[] = ["deep", "wading", "shallow", "puddle"];
 const TIER_COPY: Record<SafetyTier, string> = {
@@ -32,7 +38,9 @@ const FACTORS = [
 
 export default async function Home() {
   const [tokens, stats] = await Promise.all([getTokens(), getStats()]);
-  const featured = tokens.find((t) => t.safety.tier === "deep") ?? tokens[0];
+  // May be absent: the board deliberately renders empty rather than inventing
+  // tokens when the chain can't be read.
+  const featured = tokens.find((t) => t.safety.tier === "deep") ?? tokens[0] ?? null;
 
   const statTiles = [
     { label: "Tokens launched", value: compact(stats.launchedToday) },
@@ -81,18 +89,20 @@ export default async function Home() {
             <RipplePool />
           </div>
           {/* Latest detection chip */}
-          <div className="card absolute -bottom-5 -left-2 flex items-center gap-3 px-4 py-3 sm:-left-6">
-            <DepthBadge score={featured.safety.score} tier={featured.safety.tier} size={42} />
-            <div>
-              <p className="eyebrow">Latest sounding</p>
-              <p className="mt-0.5 text-sm font-semibold text-[var(--color-ink)]">
-                {featured.symbol} ·{" "}
-                <span style={{ color: TIER_UI[featured.safety.tier].color }}>
-                  {TIER_UI[featured.safety.tier].label}
-                </span>
-              </p>
+          {featured && (
+            <div className="card absolute -bottom-5 -left-2 flex items-center gap-3 px-4 py-3 sm:-left-6">
+              <DepthBadge score={featured.safety.score} tier={featured.safety.tier} size={42} />
+              <div>
+                <p className="eyebrow">Latest sounding</p>
+                <p className="mt-0.5 text-sm font-semibold text-[var(--color-ink)]">
+                  {featured.symbol} ·{" "}
+                  <span style={{ color: TIER_UI[featured.safety.tier].color }}>
+                    {TIER_UI[featured.safety.tier].label}
+                  </span>
+                </p>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </section>
 

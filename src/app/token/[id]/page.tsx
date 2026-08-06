@@ -10,6 +10,7 @@ import { age, compact, pct, shortAddr, usd } from "@/lib/format";
 import { TIER_UI } from "@/lib/ui";
 
 export const revalidate = 30;
+export const maxDuration = 60;
 
 type Params = { params: Promise<{ id: string }> };
 

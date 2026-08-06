@@ -259,7 +259,19 @@ export default function TokenBoard({ initial, simulate = false }: { initial: Tok
         </table>
       </div>
 
-      {rows.length === 0 && (
+      {rows.length === 0 && !q && (
+        <div className="px-6 py-12 text-center">
+          <p className="text-sm text-[var(--color-ink-soft)]">
+            No pools to show right now — we&apos;re re-reading the chain.
+          </p>
+          <p className="mt-1 text-xs text-[var(--color-ink-faint)]">
+            The board only ever shows real pools.trade tokens, so it stays empty rather than
+            showing anything we haven&apos;t read. Refresh in a moment.
+          </p>
+        </div>
+      )}
+
+      {rows.length === 0 && q && (
         <div className="px-6 py-10 text-center">
           <p className="text-sm text-[var(--color-ink-soft)]">
             Nothing on the board matches{" "}

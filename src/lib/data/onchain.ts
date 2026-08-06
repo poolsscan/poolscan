@@ -9,7 +9,6 @@
  * (top-10 / dev), age, ownership. Rolling out next: live price & liquidity from
  * the Uniswap-v4 pool, and first-block sniper detection.
  */
-import { unstable_cache } from "next/cache";
 import type { MarketStats, Token, TokenMetrics } from "../types";
 import { computeSafety } from "../safety";
 
@@ -44,9 +43,9 @@ const SNIPE_WINDOW_BLOCKS = 30;
 /** Below this share of supply outside the pool, distribution isn't meaningful yet. */
 const MIN_CIRCULATING_RATIO = 0.005;
 /** How many tokens end up on the board after ranking. */
-const FEED_LIMIT = 30;
-/** Of those, how many slots go to the freshest launches (rest go to top traded). */
-const FRESH_SLOTS = 12;
+const FEED_LIMIT = 24;
+/** ~0.2s blocks, so this is roughly the last few hours of launches. */
+const RECENT_WINDOW_BLOCKS = 120_000;
 /** Safety valve on the market-data fan-out (30 addresses per request). */
 const MAX_MARKET_BATCHES = 120;
 
@@ -78,41 +77,66 @@ async function rpc<T = Json>(
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
     ...(revalidate === false ? { cache: "no-store" as const } : { next: { revalidate } }),
   });
+  if (!res.ok) throw new Error(`rpc ${res.status} ${method}`);
   const j = await res.json();
+  // Surface node-level errors instead of returning undefined, which callers
+  // would otherwise read as "no results".
+  if (j.error) throw new Error(`rpc ${method}: ${j.error.message ?? JSON.stringify(j.error)}`);
   return j.result;
 }
 
+type Launch = { address: string; block: number };
+
 /**
- * Every token the pools.trade factory has ever created, newest first.
- *
- * The node serves the factory's whole TokenCreated history in a single
- * eth_getLogs call, so there's no paging window to fall out of — tokens from
- * launch day rank alongside the ones from a minute ago.
+ * Fetch the factory's TokenCreated logs over a block range, halving the range
+ * whenever the node refuses it. Nodes cap results (10k here) and pools.trade
+ * mints fast enough to blow past that, so a fixed window would quietly break
+ * again as the launchpad grows.
  */
-const listTokens = unstable_cache(
-  async (): Promise<{ address: string; block: number }[]> => {
-    // The raw log dump is several MB — too large for the fetch cache — so it is
-    // fetched uncached and only the distilled address list is memoised.
+async function factoryLogs(from: number, to: number, depth = 0): Promise<Json[]> {
+  try {
     const logs = await rpc<Json[]>(
       "eth_getLogs",
-      [{ address: FACTORY, topics: [TOKEN_CREATED_TOPIC], fromBlock: "0x0", toBlock: "latest" }],
+      [
+        {
+          address: FACTORY,
+          topics: [TOKEN_CREATED_TOPIC],
+          fromBlock: "0x" + from.toString(16),
+          toBlock: "0x" + to.toString(16),
+        },
+      ],
       false,
     );
-    if (!Array.isArray(logs)) return [];
-    const out: { address: string; block: number }[] = [];
-    const seen = new Set<string>();
-    for (const e of logs) {
-      // first ABI word of `data` is the new token address, right-aligned
-      const addr = "0x" + String(e.data || "").slice(26, 66).toLowerCase();
-      if (!/^0x[0-9a-f]{40}$/.test(addr) || seen.has(addr)) continue;
-      seen.add(addr);
-      out.push({ address: addr, block: parseInt(e.blockNumber, 16) || 0 });
-    }
-    return out.reverse(); // newest first
-  },
-  ["poolstrade-factory-launches"],
-  { revalidate: 60 },
-);
+    return Array.isArray(logs) ? logs : [];
+  } catch (e) {
+    if (depth >= 8 || to - from < 2) throw e;
+    // Split sequentially, not in parallel: a burst of retries just trips the
+    // node's rate limiter and turns one failure into many.
+    const mid = Math.floor((from + to) / 2);
+    const a = await factoryLogs(from, mid, depth + 1);
+    const b = await factoryLogs(mid + 1, to, depth + 1);
+    return [...a, ...b];
+  }
+}
+
+function decodeLaunches(logs: unknown): Launch[] {
+  if (!Array.isArray(logs)) return [];
+  const out: Launch[] = [];
+  const seen = new Set<string>();
+  for (const e of logs as Json[]) {
+    // first ABI word of `data` is the new token address, right-aligned
+    const addr = "0x" + String(e.data || "").slice(26, 66).toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(addr) || seen.has(addr)) continue;
+    seen.add(addr);
+    out.push({ address: addr, block: parseInt(e.blockNumber, 16) || 0 });
+  }
+  return out.reverse(); // newest first
+}
+
+/** The freshest launches, scoped to a window the node will actually serve. */
+async function recentLaunches(head: number): Promise<Launch[]> {
+  return decodeLaunches(await factoryLogs(Math.max(0, head - RECENT_WINDOW_BLOCKS), head));
+}
 
 /** Derive block time + head so we can turn creation blocks into an age. */
 async function chainClock(): Promise<{ latest: number; blockTime: number }> {
@@ -451,31 +475,19 @@ function assemble(
 }
 
 export async function getTokensOnchain(): Promise<Token[]> {
-  // 1. Every launch the pools.trade factory has ever minted, newest first.
-  const all = await listTokens();
-  if (!all.length) return [];
+  // 1. The freshest launches from the factory's own events. pools.trade now
+  //    mints past the node's 10k-log ceiling, so scanning all of history on
+  //    demand isn't viable — and a live feed wants the newest pools anyway.
+  //    Any older token is still reachable by address, via search.
+  const clock = await chainClock();
+  if (!clock.latest) return [];
+  const fresh = await recentLaunches(clock.latest);
+  const list = fresh.slice(0, FEED_LIMIT);
+  if (!list.length) return [];
 
-  // 2. Cheap batch pass for market data across the whole history.
-  const market = await dexBatch(all.map((l) => l.address));
-
-  // 3. Rank: keep the freshest launches, then fill with the most-traded. This is
-  //    pure on-chain discovery — established tokens earn their slot by volume,
-  //    nothing is hardcoded.
-  const fresh = all.slice(0, FRESH_SLOTS);
-  const chosen = new Map(fresh.map((l) => [l.address, l]));
-  const rest = all
-    .filter((l) => !chosen.has(l.address))
-    .sort((a, b) => (market[b.address]?.volume ?? 0) - (market[a.address]?.volume ?? 0));
-  for (const l of rest) {
-    if (chosen.size >= FEED_LIMIT) break;
-    if ((market[l.address]?.volume ?? 0) <= 0) continue;
-    chosen.set(l.address, l);
-  }
-  const list = [...chosen.values()];
-
-  // 4. Enrich the shortlist with identity + holder distribution.
-  const [clock, creators] = await Promise.all([
-    chainClock(),
+  // 2. Market data for just the shortlist, and identities.
+  const [market, creators] = await Promise.all([
+    dexBatch(list.map((l) => l.address)),
     creatorsOf(list.map((l) => l.address)),
   ]);
   const tokens = await Promise.all(
@@ -527,11 +539,13 @@ export async function getTokenOnchain(id: string): Promise<Token | null> {
 }
 
 export async function getStatsOnchain(): Promise<MarketStats> {
-  // Total launches straight from the factory's own event history.
-  const launched = await listTokens()
-    .then((l) => l.length)
-    .catch(() => 0);
   const tokens = await getTokensOnchain().catch(() => [] as Token[]);
+  // Launches seen in the recent window we actually scan, rather than an
+  // all-time figure we can no longer read in one pass.
+  const launched = await chainClock()
+    .then((c) => (c.latest ? recentLaunches(c.latest) : []))
+    .then((l) => l.length)
+    .catch(() => tokens.length);
   const avgSafety = tokens.length
     ? Math.round(tokens.reduce((s, t) => s + t.safety.score, 0) / tokens.length)
     : 0;

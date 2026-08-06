@@ -1,10 +1,11 @@
 /**
  * Data adapter — the single swap point between live chain data and mock data.
  *
- * Default is LIVE: real pools.trade tokens read from the factory + Blockscout on
- * Robinhood Chain (see ./onchain). If the chain is unreachable or returns
- * nothing, we fall back to the deterministic mock feed so the app never breaks.
- * Force one mode with NEXT_PUBLIC_DATA_SOURCE = "live" | "mock".
+ * Live chain data is the only thing production ever serves. The mock feed exists
+ * for local development; substituting it on the real site would put invented
+ * tokens in front of people who came here to check whether a token is real, so
+ * a failure surfaces as an empty board instead. Force a mode with
+ * NEXT_PUBLIC_DATA_SOURCE = "live" | "mock".
  */
 import type { MarketStats, Token } from "../types";
 import { mockStats, mockToken, mockTokens } from "./mock";
@@ -15,15 +16,18 @@ export type DataSource = "live" | "mock";
 export const DATA_SOURCE: DataSource =
   (process.env.NEXT_PUBLIC_DATA_SOURCE as DataSource) || "live";
 
+/** Mock is a development aid only — never a stand-in for real chain data. */
+const MOCK_FALLBACK_ALLOWED =
+  DATA_SOURCE === "mock" || process.env.NODE_ENV !== "production";
+
 export async function getTokens(): Promise<Token[]> {
   if (DATA_SOURCE === "mock") return mockTokens();
   try {
-    const tokens = await getTokensOnchain();
-    if (tokens.length) return tokens;
+    return await getTokensOnchain();
   } catch (e) {
-    console.error("[data] on-chain getTokens failed, using mock:", e);
+    console.error("[data] on-chain getTokens failed:", e);
+    return MOCK_FALLBACK_ALLOWED ? mockTokens() : [];
   }
-  return mockTokens();
 }
 
 export async function getToken(id: string): Promise<Token | null> {
@@ -32,8 +36,9 @@ export async function getToken(id: string): Promise<Token | null> {
       const t = await getTokenOnchain(id);
       if (t) return t;
     } catch (e) {
-      console.error("[data] on-chain getToken failed, using mock:", e);
+      console.error("[data] on-chain getToken failed:", e);
     }
+    if (!MOCK_FALLBACK_ALLOWED) return null;
   }
   return mockToken(id) ?? null;
 }
@@ -41,10 +46,10 @@ export async function getToken(id: string): Promise<Token | null> {
 export async function getStats(): Promise<MarketStats> {
   if (DATA_SOURCE === "mock") return mockStats();
   try {
-    const s = await getStatsOnchain();
-    if (s.launchedToday > 0) return s;
+    return await getStatsOnchain();
   } catch (e) {
-    console.error("[data] on-chain getStats failed, using mock:", e);
+    console.error("[data] on-chain getStats failed:", e);
+    if (MOCK_FALLBACK_ALLOWED) return mockStats();
+    return { launchedToday: 0, totalVolumeUsd: 0, graduated: 0, ruggedToday: 0, avgSafety: 0 };
   }
-  return mockStats();
 }
