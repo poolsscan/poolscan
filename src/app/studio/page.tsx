@@ -21,6 +21,13 @@ const PRESETS: Preset[] = [
       "The rug radar for pools.trade. Sound the depth of every new token on Robinhood Chain — before you dive in.",
   },
   {
+    name: "LP custody",
+    tag: "What's new",
+    headline: "Who can pull the pool?",
+    subtext:
+      "A token's launch liquidity is an NFT someone owns. If a contract holds it, no single wallet can pull the pool. If a wallet holds it, one key can. PoolScan reads which.",
+  },
+  {
     name: "Snipers",
     tag: "What's new",
     headline: "Sniper detection is live",
