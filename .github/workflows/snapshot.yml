@@ -1,0 +1,55 @@
+name: Snapshot indexer
+
+# Crawls the pools.trade factory and publishes a JSON snapshot the site reads.
+# It commits to a side branch, not main, so indexing never triggers a redeploy.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # every 10 minutes
+  workflow_dispatch: {}
+
+concurrency:
+  group: snapshot
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the indexer
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Fetch the previous snapshot
+        run: |
+          mkdir -p snapshot
+          if git ls-remote --exit-code --heads origin snapshot >/dev/null 2>&1; then
+            git fetch origin snapshot --depth=1
+            git show origin/snapshot:tokens.json > snapshot/tokens.json 2>/dev/null || true
+            git show origin/snapshot:launches.json > snapshot/launches.json 2>/dev/null || true
+            echo "resuming from published snapshot"
+          else
+            echo "no snapshot branch yet — first run will do a full scan"
+          fi
+
+      - name: Build the snapshot
+        run: node scripts/snapshot.mjs snapshot/tokens.json
+
+      - name: Publish to the snapshot branch
+        run: |
+          cd snapshot
+          git init -q
+          git config user.name "poolscan"
+          git config user.email "313386906+poolsscan@users.noreply.github.com"
+          git checkout -q -b snapshot
+          git add tokens.json launches.json
+          git commit -q -m "snapshot $(date -u +%FT%TZ)"
+          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" snapshot
+          echo "published"

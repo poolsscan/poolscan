@@ -10,6 +10,7 @@
 import type { MarketStats, Token } from "../types";
 import { mockStats, mockToken, mockTokens } from "./mock";
 import { getStatsOnchain, getTokenOnchain, getTokensOnchain } from "./onchain";
+import { getStatsSnapshot, getTokenSnapshot, getTokensSnapshot } from "./snapshot";
 
 export type DataSource = "live" | "mock";
 
@@ -20,8 +21,19 @@ export const DATA_SOURCE: DataSource =
 const MOCK_FALLBACK_ALLOWED =
   DATA_SOURCE === "mock" || process.env.NODE_ENV !== "production";
 
+/**
+ * The published snapshot is the primary source: it covers the whole launch
+ * history and costs one small fetch. Reading the chain directly is the fallback
+ * for when it is missing or still warming up.
+ */
 export async function getTokens(): Promise<Token[]> {
   if (DATA_SOURCE === "mock") return mockTokens();
+  try {
+    const snap = await getTokensSnapshot();
+    if (snap?.length) return snap;
+  } catch (e) {
+    console.error("[data] snapshot getTokens failed:", e);
+  }
   try {
     return await getTokensOnchain();
   } catch (e) {
@@ -32,11 +44,19 @@ export async function getTokens(): Promise<Token[]> {
 
 export async function getToken(id: string): Promise<Token | null> {
   if (DATA_SOURCE !== "mock") {
+    // Read this one live: a detail page is a single token, so it's cheap, and
+    // fresher than the snapshot's last run.
     try {
       const t = await getTokenOnchain(id);
       if (t) return t;
     } catch (e) {
       console.error("[data] on-chain getToken failed:", e);
+    }
+    try {
+      const t = await getTokenSnapshot(id);
+      if (t) return t;
+    } catch (e) {
+      console.error("[data] snapshot getToken failed:", e);
     }
     if (!MOCK_FALLBACK_ALLOWED) return null;
   }
@@ -45,6 +65,12 @@ export async function getToken(id: string): Promise<Token | null> {
 
 export async function getStats(): Promise<MarketStats> {
   if (DATA_SOURCE === "mock") return mockStats();
+  try {
+    const snap = await getStatsSnapshot();
+    if (snap) return snap;
+  } catch (e) {
+    console.error("[data] snapshot getStats failed:", e);
+  }
   try {
     return await getStatsOnchain();
   } catch (e) {
