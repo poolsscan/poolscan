@@ -32,11 +32,15 @@ export interface SafetyReport {
  */
 export interface TokenMetrics {
   /**
-   * Who can move the launch liquidity position.
-   * `contract` = held by a contract (no single wallet can just withdraw it),
-   * `wallet` = held by an externally-owned account that can pull it at will.
+   * What can happen to the launch liquidity position.
+   * `locked`   = held by the launchpad's splitter, which has no way to release it
+   * `contract` = held by some other contract — safer than a wallet, terms unknown
+   * `wallet`   = held by an externally-owned account that can pull it at will
+   * `pulled`   = liquidity has already been reduced since launch
    */
-  lpStatus: "burned" | "locked" | "unlocked" | "contract" | "wallet" | "unknown";
+  lpStatus: "burned" | "locked" | "unlocked" | "contract" | "wallet" | "pulled" | "unknown";
+  /** Share of the launch position still in place, when it has been reduced. */
+  lpRemainingPct?: number | null;
   /** Days until LP unlock, when locked. */
   lpUnlockDays: number | null;
   /** % of supply held by the deployer wallet. */

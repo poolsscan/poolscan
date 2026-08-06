@@ -20,7 +20,7 @@ const TOC = [
 ];
 
 const SOUNDINGS: [string, string, string][] = [
-  ["Liquidity", "28", "The biggest rug lever. We read who holds the launch liquidity position: a contract means no single wallet can withdraw it; a plain wallet means one key can pull the pool. Burned LP scores full marks. We don't claim liquidity is “locked” unless that's provable on-chain."],
+  ["Liquidity", "28", "The biggest rug lever. From the launch transaction we find the pool's liquidity position, then read who owns it and whether it's still intact. Held by the launchpad's fee splitter — whose code has no way to release a position — it's locked and scores full marks. Held by a plain wallet, one key can pull the pool. And if the position has shrunk since launch, we say so: liquidity has already been withdrawn."],
   ["Ownership", "14", "Whether the owner keys are renounced. Renounced = nobody can flip a privileged switch. Keys still active scores zero."],
   ["Dev wallet", "18", "Share of supply held by the deployer. Under ~3% is ideal; 20%+ scores zero."],
   ["Distribution", "14", "Share held by the top 10 wallets. Under ~25% is healthy; 70%+ scores zero."],
@@ -165,9 +165,9 @@ export default function DocsPage() {
               launch liquidity position, pool depth, and live market data.
             </p>
             <p className="mt-4">
-              Two honest limits. We can tell you a launch LP is held by a contract rather than a
-              wallet, but not the terms of that contract — so we credit it without calling the
-              liquidity &ldquo;locked&rdquo;. And bonding-curve{" "}
+              Two honest limits. Some tokens open their pool after launch rather than during it —
+              there is no launch position to read yet, so liquidity stays unscored rather than
+              being treated as a red flag. And bonding-curve{" "}
               <strong className="text-[var(--color-ink)]">graduation</strong> isn&apos;t decoded
               yet.
             </p>

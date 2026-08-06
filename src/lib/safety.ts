@@ -79,21 +79,31 @@ export function computeSafety(
   if (metrics.lpStatus === "burned") {
     push("lp", "Liquidity", "LP burned — can't be pulled", 28, 1, "good");
   } else if (metrics.lpStatus === "locked") {
-    const days = metrics.lpUnlockDays ?? 0;
-    const frac = 0.4 + 0.6 * lin(days, 7, 180);
-    const status: FactorStatus = days >= 30 ? "good" : "warn";
-    push("lp", "Liquidity", `LP locked ${days}d`, 28, frac, status);
-  } else if (metrics.lpStatus === "contract") {
-    // A contract holds the position, so no single wallet can simply withdraw it.
-    // We stop short of full marks: the holder's terms aren't verifiable on-chain.
+    // Either a timelock with a stated unlock, or the launchpad's splitter, whose
+    // source exposes no way to move or withdraw a position at all.
+    const days = metrics.lpUnlockDays;
+    if (days === null || days === undefined) {
+      push("lp", "Liquidity", "LP locked in the launchpad's splitter — can't be pulled", 28, 1, "good");
+    } else {
+      const frac = 0.4 + 0.6 * lin(days, 7, 180);
+      push("lp", "Liquidity", `LP locked ${days}d`, 28, frac, days >= 30 ? "good" : "warn");
+    }
+  } else if (metrics.lpStatus === "pulled") {
+    const left = metrics.lpRemainingPct;
     push(
       "lp",
       "Liquidity",
-      "Launch LP held by a contract, not a wallet",
+      left === null || left === undefined
+        ? "Launch liquidity has been withdrawn"
+        : `Launch liquidity withdrawn — ${left.toFixed(0)}% left`,
       28,
-      0.75,
-      "good",
+      0,
+      "bad",
     );
+  } else if (metrics.lpStatus === "contract") {
+    // Some other contract holds it: no single wallet can withdraw, but we can't
+    // verify that custodian's terms, so we stop short of full marks.
+    push("lp", "Liquidity", "Launch LP held by a contract, not a wallet", 28, 0.7, "good");
   } else if (metrics.lpStatus === "wallet") {
     push("lp", "Liquidity", "Launch LP sits in a wallet — withdrawable", 28, 0, "bad");
   } else if (metrics.lpStatus === "unlocked") {

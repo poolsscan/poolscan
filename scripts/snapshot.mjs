@@ -33,6 +33,17 @@ const BURN = new Set([
   "0x000000000000000000000000000000000000dead",
 ]);
 const FIRST_FACTORY_BLOCK = 4_727_385;
+const INITIALIZE_TOPIC = "0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438";
+const MODIFY_LIQUIDITY_TOPIC = "0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec";
+const ZERO_TOPIC = "0x" + "0".repeat(64);
+/** Launchpad fee splitters: verified to hold LP positions with no way to release them. */
+const OFFICIAL_LOCKERS = new Set([
+  "0xeff166aaf189323c58dc27ed1206eb2c37faacdf",
+  "0x7198c32a497c09497e04c86cf8f77a244a9e4b8f",
+  "0xdf50f4ea2207f9d2a753a3dae729b36fdef13b23",
+  "0x222d6d4f1ce59b0d48d5505114ec8addc90a4359",
+  "0x6cc1b74fc1be1ff373fa07f3381856f38103e653",
+]);
 const SNIPE_WINDOW_BLOCKS = 30;
 const MIN_CIRCULATING_RATIO = 0.005;
 
@@ -243,25 +254,50 @@ async function sniperShare(addr, block, supply) {
   }
 }
 
-async function lpCustody(block) {
-  if (!block) return "unknown";
+/**
+ * Who can move the launch liquidity, read from the launch transaction itself.
+ * Reading the launch *block* instead picks up unrelated positions minted in the
+ * same block, which produced false "dev holds the LP" flags.
+ */
+async function lpCustody(token) {
+  const unknown = { status: "unknown", remainingPct: null };
   try {
-    const logs = await rpc("eth_getLogs", [
-      {
-        address: POSITION_MANAGER,
-        topics: [TRANSFER_TOPIC],
-        fromBlock: "0x" + block.toString(16),
-        toBlock: "0x" + (block + 2).toString(16),
-      },
+    const mint = await rpc("eth_getLogs", [
+      { address: token, topics: [TRANSFER_TOPIC, ZERO_TOPIC], fromBlock: "0x0", toBlock: "latest" },
     ]);
-    const moves = (Array.isArray(logs) ? logs : []).filter((e) => (e.topics?.length ?? 0) >= 4);
-    if (!moves.length) return "unknown";
-    const owner = ("0x" + String(moves[moves.length - 1].topics[2]).slice(26)).toLowerCase();
-    if (BURN.has(owner)) return "contract";
+    if (!Array.isArray(mint) || !mint.length) return unknown;
+
+    const receipt = await rpc("eth_getTransactionReceipt", [mint[0].transactionHash]);
+    let lpId = null, liqLaunch = 0n, sawPool = false;
+    for (const log of receipt?.logs ?? []) {
+      if (String(log.address).toLowerCase() !== POOL_MANAGER) continue;
+      const d = String(log.data).slice(2);
+      const word = (i) => d.slice(i * 64, (i + 1) * 64);
+      if (log.topics?.[0] === INITIALIZE_TOPIC) sawPool = true;
+      if (log.topics?.[0] === MODIFY_LIQUIDITY_TOPIC) {
+        lpId = BigInt("0x" + word(3)); // salt carries the position's token id
+        liqLaunch = BigInt("0x" + word(2));
+      }
+    }
+    // Pools opened later (auction/LBP style) simply have nothing to read yet.
+    if (!sawPool || lpId === null || liqLaunch <= 0n) return unknown;
+
+    const pad = (n) => n.toString(16).padStart(64, "0");
+    const [ownerRaw, liqRaw] = await Promise.all([
+      rpc("eth_call", [{ to: POSITION_MANAGER, data: "0x6352211e" + pad(lpId) }, "latest"]),
+      rpc("eth_call", [{ to: POSITION_MANAGER, data: "0x1efeed33" + pad(lpId) }, "latest"]),
+    ]);
+    const owner = ("0x" + String(ownerRaw).slice(26)).toLowerCase();
+    const liqNow = BigInt(liqRaw || "0x0");
+
+    if (liqNow < liqLaunch) {
+      return { status: "pulled", remainingPct: Number((liqNow * 10000n) / liqLaunch) / 100 };
+    }
+    if (OFFICIAL_LOCKERS.has(owner) || BURN.has(owner)) return { status: "locked", remainingPct: null };
     const code = await rpc("eth_getCode", [owner, "latest"]);
-    return code && code.length > 4 ? "contract" : "wallet";
+    return { status: code && code.length > 4 ? "contract" : "wallet", remainingPct: null };
   } catch {
-    return "unknown";
+    return unknown;
   }
 }
 
@@ -298,7 +334,7 @@ async function enrich(launch, market, creators, clock, tags = []) {
     codeTraits(address),
     holderDist(address, supply, info?.creator),
     sniperShare(address, block, supply),
-    lpCustody(block),
+    lpCustody(address),
   ]);
 
   const m = market[address] || {};
@@ -318,7 +354,8 @@ async function enrich(launch, market, creators, clock, tags = []) {
     liquidityUsd: m.liquidity ?? 0,
     marketCapUsd: m.mcap ?? 0,
     metrics: {
-      lpStatus: lp,
+      lpStatus: lp.status,
+      lpRemainingPct: lp.remainingPct,
       lpUnlockDays: null,
       devHoldingPct: dist.devHoldingPct,
       top10Pct: dist.top10Pct,

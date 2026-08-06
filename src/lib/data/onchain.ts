@@ -34,6 +34,26 @@ const TRANSFER_TOPIC =
 const POOL_MANAGER = "0x8366a39cc670b4001a1121b8f6a443a643e40951";
 /** Uniswap v4 PositionManager — mints an ERC-721 for each liquidity position. */
 const POSITION_MANAGER = "0x58daec3116aae6d93017baaea7749052e8a04fa7";
+/** Initialize(bytes32,address,address,uint24,int24,address,uint160,int24) */
+const INITIALIZE_TOPIC =
+  "0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438";
+/** ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32) */
+const MODIFY_LIQUIDITY_TOPIC =
+  "0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec";
+const ZERO_TOPIC = "0x" + "0".repeat(64);
+/**
+ * The launchpad's fee splitters, which take custody of launch LP positions.
+ * Their verified source states positions sent there are permanently locked, and
+ * they expose no owner, no transfer and no upgrade path — so a position held by
+ * one cannot be pulled by anybody.
+ */
+const OFFICIAL_LOCKERS = new Set([
+  "0xeff166aaf189323c58dc27ed1206eb2c37faacdf",
+  "0x7198c32a497c09497e04c86cf8f77a244a9e4b8f",
+  "0xdf50f4ea2207f9d2a753a3dae729b36fdef13b23",
+  "0x222d6d4f1ce59b0d48d5505114ec8addc90a4359",
+  "0x6cc1b74fc1be1ff373fa07f3381856f38103e653",
+]);
 const BURN_ADDRESSES = new Set([
   "0x0000000000000000000000000000000000000000",
   "0x000000000000000000000000000000000000dead",
@@ -363,32 +383,57 @@ async function sniperShare(
  * liquidity is "locked", only who is in a position to move it.
  */
 async function lpCustody(
-  creationBlock: number,
-): Promise<"contract" | "wallet" | "unknown"> {
-  if (!creationBlock) return "unknown";
+  token: string,
+): Promise<{ status: TokenMetrics["lpStatus"]; remainingPct: number | null }> {
+  const unknown = { status: "unknown" as const, remainingPct: null };
   try {
-    const logs = await rpc<Json[]>(
+    // Find the launch transaction, then read that receipt: the pool's own
+    // Initialize and ModifyLiquidity events identify the exact launch position.
+    // (Watching the launch *block* instead picked up whatever else happened to
+    // mint a position in the same block, which produced false red flags.)
+    const mint = await rpc<Json[]>(
       "eth_getLogs",
-      [
-        {
-          address: POSITION_MANAGER,
-          topics: [TRANSFER_TOPIC],
-          fromBlock: "0x" + creationBlock.toString(16),
-          toBlock: "0x" + (creationBlock + 2).toString(16),
-        },
-      ],
-       86400,
+      [{ address: token, topics: [TRANSFER_TOPIC, ZERO_TOPIC], fromBlock: "0x0", toBlock: "latest" }],
+      86400,
     );
-    if (!Array.isArray(logs) || !logs.length) return "unknown";
-    // ERC-721 transfers carry four topics; follow the position to its last owner.
-    const moves = logs.filter((e) => (e.topics?.length ?? 0) >= 4);
-    if (!moves.length) return "unknown";
-    const owner = ("0x" + String(moves[moves.length - 1].topics[2]).slice(26)).toLowerCase();
-    if (BURN_ADDRESSES.has(owner)) return "contract"; // burned — nobody can move it
+    if (!Array.isArray(mint) || !mint.length) return unknown;
+
+    const receipt = await rpc<Json>("eth_getTransactionReceipt", [mint[0].transactionHash], 86400);
+    let lpId: bigint | null = null;
+    let liqLaunch = 0n;
+    let sawPool = false;
+    for (const log of receipt?.logs ?? []) {
+      if (String(log.address).toLowerCase() !== POOL_MANAGER) continue;
+      const d = String(log.data).slice(2);
+      const word = (i: number) => d.slice(i * 64, (i + 1) * 64);
+      if (log.topics?.[0] === INITIALIZE_TOPIC) sawPool = true;
+      if (log.topics?.[0] === MODIFY_LIQUIDITY_TOPIC) {
+        lpId = BigInt("0x" + word(3)); // salt carries the position's token id
+        liqLaunch = BigInt("0x" + word(2));
+      }
+    }
+    // Some tokens open their pool later (auction/LBP style). That is not a red
+    // flag — there is simply no launch position to read yet.
+    if (!sawPool || lpId === null || liqLaunch <= 0n) return unknown;
+
+    const pad = (n: bigint) => n.toString(16).padStart(64, "0");
+    const [ownerRaw, liqRaw] = await Promise.all([
+      rpc<string>("eth_call", [{ to: POSITION_MANAGER, data: "0x6352211e" + pad(lpId) }, "latest"], 300),
+      rpc<string>("eth_call", [{ to: POSITION_MANAGER, data: "0x1efeed33" + pad(lpId) }, "latest"], 300),
+    ]);
+    const owner = ("0x" + String(ownerRaw).slice(26)).toLowerCase();
+    const liqNow = BigInt(liqRaw || "0x0");
+
+    if (liqNow < liqLaunch) {
+      return { status: "pulled", remainingPct: Number((liqNow * 10000n) / liqLaunch) / 100 };
+    }
+    if (OFFICIAL_LOCKERS.has(owner) || BURN_ADDRESSES.has(owner)) {
+      return { status: "locked", remainingPct: null };
+    }
     const code = await rpc<string>("eth_getCode", [owner, "latest"], 3600);
-    return code && code.length > 4 ? "contract" : "wallet";
+    return { status: code && code.length > 4 ? "contract" : "wallet", remainingPct: null };
   } catch {
-    return "unknown";
+    return unknown;
   }
 }
 
@@ -434,7 +479,7 @@ function assemble(
   dex: Dex | null,
   traits: CodeTraits,
   sniperPct: number | null,
-  lpStatus: TokenMetrics["lpStatus"],
+  lp: { status: TokenMetrics["lpStatus"]; remainingPct: number | null },
 ): Token {
   const supplyNum = Number(meta.totalSupply) / 10 ** meta.decimals;
   const priceUsd = dex?.price ?? 0;
@@ -445,7 +490,8 @@ function assemble(
   // aren't decoded yet, so they stay null — reported as unknown rather than
   // guessed, and excluded from the score.
   const metrics: TokenMetrics = {
-    lpStatus,
+    lpStatus: lp.status,
+    lpRemainingPct: lp.remainingPct,
     lpUnlockDays: null,
     devHoldingPct: dist.devHoldingPct,
     top10Pct: dist.top10Pct,
@@ -499,7 +545,7 @@ export async function getTokensOnchain(): Promise<Token[]> {
         const [dist, snipers, lp] = await Promise.all([
           holderDist(l.address, meta.totalSupply, info?.creator),
           sniperShare(l.address, block, meta.totalSupply),
-          lpCustody(block),
+          lpCustody(l.address),
         ]);
         const ageSeconds =
           clock.latest && block ? Math.max(1, Math.round((clock.latest - block) * clock.blockTime)) : 0;
@@ -528,7 +574,7 @@ export async function getTokenOnchain(id: string): Promise<Token | null> {
     const [dist, snipers, lp] = await Promise.all([
       holderDist(addr, meta.totalSupply, info?.creator),
       sniperShare(addr, block, meta.totalSupply),
-      lpCustody(block),
+      lpCustody(addr),
     ]);
     const ageSeconds =
       clock.latest && block ? Math.max(1, Math.round((clock.latest - block) * clock.blockTime)) : 0;
