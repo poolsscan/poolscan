@@ -21,6 +21,13 @@ const PRESETS: Preset[] = [
       "The rug radar for pools.trade. Sound the depth of every new token on Robinhood Chain — before you dive in.",
   },
   {
+    name: "Drain alert",
+    tag: "What's new",
+    headline: "When the pool drains, you see it",
+    subtext:
+      "PoolScan reads each token's launch liquidity position and compares it to what's there now. If it has shrunk, we say so — and how much is left.",
+  },
+  {
     name: "LP custody",
     tag: "What's new",
     headline: "Who can pull the pool?",
