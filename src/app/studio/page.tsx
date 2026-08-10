@@ -21,6 +21,13 @@ const PRESETS: Preset[] = [
       "The rug radar for pools.trade. Sound the depth of every new token on Robinhood Chain — before you dive in.",
   },
   {
+    name: "We were wrong",
+    tag: "What we fixed",
+    headline: "We were wrong twice this week",
+    subtext:
+      "One token got a perfect score we hadn't earned. Another got a red flag it didn't deserve. Both are fixed — and the scoring changed so neither can happen the same way again.",
+  },
+  {
     name: "Drain alert",
     tag: "What's new",
     headline: "When the pool drains, you see it",
